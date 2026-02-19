@@ -2,9 +2,8 @@ import os
 import sys
 import subprocess
 
-# --- 1. BOOTSTRAP (Install Helpers & Set Paths) ---
+# --- 1. BOOTSTRAP (Path & Dependency Correction) ---
 def bootstrap():
-    # We still need these external helpers for the local NorenApi.py to work
     required = ["pandas", "supabase", "python-dotenv", "pyotp", "pytz", "websocket-client"]
     try:
         import supabase, pyotp, pytz, dotenv, websocket
@@ -12,11 +11,16 @@ def bootstrap():
         print("📦 Installing helpers for local Noren library...")
         subprocess.check_call([sys.executable, "-m", "pip", "install", *required])
 
-    # Ensure Python can see the local NorenRestApiPy folder
-    # This adds 'scripts' to the path so 'from NorenRestApiPy.NorenApi import NorenApi' works
-    script_dir = os.path.dirname(os.path.abspath(__file__))
-    if script_dir not in sys.path:
-        sys.path.append(script_dir)
+    # --- CRITICAL PATH FIX ---
+    # This finds the absolute path to the 'scripts' folder
+    current_dir = os.path.dirname(os.path.abspath(__file__))
+    if current_dir not in sys.path:
+        sys.path.insert(0, current_dir)
+    
+    # Also add the parent directory just in case
+    parent_dir = os.path.dirname(current_dir)
+    if parent_dir not in sys.path:
+        sys.path.insert(0, parent_dir)
 
 bootstrap()
 
@@ -25,11 +29,12 @@ import pyotp
 import pandas as pd
 from datetime import datetime
 import pytz
-# This will now look inside your scripts/NorenRestApiPy folder
-from NorenRestApiPy.NorenApi import NorenApi 
+from NorenRestApiPy.NorenApi import NorenApi # Now Python will find this in scripts/
 from supabase import create_client, Client
 from dotenv import load_dotenv
 from collections import defaultdict
+
+# ... [REST OF YOUR CODE UNTOUCHED] ...
 
 
 
