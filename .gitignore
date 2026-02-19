@@ -1,0 +1,12 @@
+# Credentials
+.env
+*.json
+service_account.json
+
+# Python junk
+__pycache__/
+*.pyc
+
+# Local Data
+*.xlsx
+*.csv
