@@ -1,0 +1,25 @@
+name: 🔑 Step 0 - Trade Ingestor
+
+on:
+  workflow_dispatch:
+
+jobs:
+  ingest-trades:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: Run Trade Ingestor
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+          GDRIVE_SERVICE_ACCOUNT_JSON: ${{ secrets.GDRIVE_SERVICE_ACCOUNT_JSON }}
+          SOURCE_FOLDER: ${{ secrets.SOURCE_FOLDER }}
+          DEST_FOLDER: ${{ secrets.DEST_FOLDER }}
+        run: python scripts/0_trade_ingestor.py
