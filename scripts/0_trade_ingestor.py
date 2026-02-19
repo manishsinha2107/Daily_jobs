@@ -1,34 +1,51 @@
 import os
+import sys
+import subprocess
 import re
 import json
-import pandas as pd
+import io
+import platform
 from datetime import datetime
+
+# --- SELF-INSTALLING DEPENDENCIES ---
+def install_if_missing():
+    REQS = ["pandas", "openpyxl", "requests", "google-auth", "supabase"]
+    try:
+        import pandas, requests, google.oauth2, supabase, openpyxl
+    except ImportError:
+        print("📦 Missing libraries detected. Installing self-dependencies...")
+        subprocess.check_call([sys.executable, "-m", "pip", "install", *REQS])
+
+install_if_missing()
+
+# Now safe to import the heavy hitters
+import pandas as pd
 import requests
 from google.oauth2 import service_account
 import google.auth.transport.requests
-import io
-import platform
 from supabase import create_client, Client
 
-# --- CONFIGURATION ---
-# --- CONFIGURATION (SECURED FOR PUBLIC REPO) ---
+# --- CONFIGURATION (SECURED) ---
 SUPABASE_URL = os.environ.get("SUPABASE_URL")
 SUPABASE_KEY = os.environ.get("SUPABASE_KEY")
-
-# Move folder IDs to Environment Variables
 SOURCE_FOLDER = os.environ.get("GDRIVE_SOURCE_ID")
 DEST_FOLDER = os.environ.get("GDRIVE_DEST_ID")
 
 # Initialize Supabase Client
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
-# Safety Check: Stop if environment is not set up
+# Safety Check
 if not all([SUPABASE_URL, SUPABASE_KEY, SOURCE_FOLDER, DEST_FOLDER]):
-    print("❌ ERROR: Missing Critical Environment Variables.")
-    exit(1)
+    print("❌ ERROR: Missing Environment Variables (URL/KEY/FOLDER_IDs)")
+    sys.exit(1)
 
 SERVICE_ACCOUNT_INFO = json.loads(os.environ.get("GDRIVE_SERVICE_ACCOUNT_JSON"))
 SCOPES = ['https://www.googleapis.com/auth/drive']
+
+# --- [REST OF YOUR FUNCTIONS: update_heartbeat, get_drive_token, etc.] ---
+# (Keep your existing move_drive_file, get_active_strategies, and run_ingestion as is)
+
+
 
 # --- STABLE HEARTBEAT REPORTER (GitHub Secret Safe) ---
 def update_heartbeat(status, msg):
