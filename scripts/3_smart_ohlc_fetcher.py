@@ -1,44 +1,14 @@
 import os
-import sys
-import subprocess
-
-# --- 1. BOOTSTRAP (Path & Dependency Correction) ---
-def bootstrap():
-    required = ["pandas", "supabase", "python-dotenv", "pyotp", "pytz", "websocket-client"]
-    try:
-        import supabase, pyotp, pytz, dotenv, websocket
-    except ImportError:
-        print("📦 Installing helpers for local Noren library...")
-        subprocess.check_call([sys.executable, "-m", "pip", "install", *required])
-
-    # --- CRITICAL PATH FIX ---
-    # This finds the absolute path to the 'scripts' folder
-    current_dir = os.path.dirname(os.path.abspath(__file__))
-    if current_dir not in sys.path:
-        sys.path.insert(0, current_dir)
-    
-    # Also add the parent directory just in case
-    parent_dir = os.path.dirname(current_dir)
-    if parent_dir not in sys.path:
-        sys.path.insert(0, parent_dir)
-
-bootstrap()
-
-# --- 2. YOUR ORIGINAL IMPORTS ---
 import pyotp
 import pandas as pd
 from datetime import datetime
 import pytz
-from NorenRestApiPy.NorenApi import NorenApi # Now Python will find this in scripts/
+from NorenRestApiPy.NorenApi import NorenApi
 from supabase import create_client, Client
 from dotenv import load_dotenv
 from collections import defaultdict
 
-# ... [REST OF YOUR CODE UNTOUCHED] ...
-
-
-
-# Load .env (Local PyCharm) or use OS Environment (GitHub)
+# --- MIGRATION FIX: Local vs Cloud Environment ---
 if os.path.exists(".env"):
     load_dotenv()
 
@@ -47,7 +17,7 @@ url = os.getenv("SUPABASE_URL")
 key = os.getenv("SUPABASE_KEY")
 if not url or not key:
     print("❌ Error: Supabase credentials missing.")
-    sys.exit(1)
+    exit(1)
 supabase: Client = create_client(url, key)
 
 # --- HEARTBEAT REPORTER (Surgical Patch) ---
