@@ -1,0 +1,30 @@
+name: 📈 Step 3 - Smart OHLC Fetcher
+
+on:
+  workflow_dispatch:
+
+jobs:
+  fetch-ohlc:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: Run OHLC Fetcher
+        env:
+          # Supabase
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+          # Shoonya Credentials (Ensure these match your Secret names)
+          SHOONYA_USER_ID: ${{ secrets.SHOONYA_USER_ID }}
+          SHOONYA_PASSWORD: ${{ secrets.SHOONYA_PASSWORD }}
+          SHOONYA_TOTP_KEY: ${{ secrets.SHOONYA_TOTP_KEY }}
+          SHOONYA_VC: ${{ secrets.SHOONYA_VC }}
+          SHOONYA_API_KEY: ${{ secrets.SHOONYA_API_KEY }}
+          SHOONYA_IMEI: ${{ secrets.SHOONYA_IMEI }}
+        run: python scripts/3_smart_ohlc_fetcher.py
