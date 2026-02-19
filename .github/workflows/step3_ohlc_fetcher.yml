@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
 
 jobs:
-  run-fetcher:
+  run-script:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Repository
@@ -14,6 +14,12 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: '3.10'
+
+      - name: Install Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          # Added pyotp, pytz, and websocket-client (needed by NorenApi)
+          pip install pandas supabase python-dotenv pyotp pytz websocket-client
 
       - name: Run OHLC Fetcher
         env:
