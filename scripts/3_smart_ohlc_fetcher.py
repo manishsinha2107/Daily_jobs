@@ -1,4 +1,25 @@
 import os
+import sys
+import subprocess
+
+# --- 1. THE "BOOTSTRAP" BLOCK (Self-Sufficient Environment) ---
+def bootstrap():
+    """Checks and installs dependencies before the rest of the script runs."""
+    # Added Shoonya API and TOTP requirements
+    required = ["pandas", "supabase", "python-dotenv", "pyotp", "pytz", "NorenRestApiPy"]
+    try:
+        import supabase
+        import pyotp
+        import pytz
+        from NorenRestApiPy.NorenApi import NorenApi
+    except ImportError:
+        print("📦 Missing libraries detected. Bootstrapping Shoonya Environment...")
+        subprocess.check_call([sys.executable, "-m", "pip", "install", *required])
+
+# Execute the bootstrap immediately
+bootstrap()
+
+# --- 2. NOW IT IS SAFE TO IMPORT EVERYTHING ELSE ---
 import pyotp
 import pandas as pd
 from datetime import datetime
@@ -8,7 +29,7 @@ from supabase import create_client, Client
 from dotenv import load_dotenv
 from collections import defaultdict
 
-# --- MIGRATION FIX: Local vs Cloud Environment ---
+# Load .env (Local PyCharm) or use OS Environment (GitHub)
 if os.path.exists(".env"):
     load_dotenv()
 
@@ -17,7 +38,7 @@ url = os.getenv("SUPABASE_URL")
 key = os.getenv("SUPABASE_KEY")
 if not url or not key:
     print("❌ Error: Supabase credentials missing.")
-    exit(1)
+    sys.exit(1)
 supabase: Client = create_client(url, key)
 
 # --- HEARTBEAT REPORTER (Surgical Patch) ---
