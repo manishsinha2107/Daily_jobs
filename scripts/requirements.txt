@@ -1,0 +1,12 @@
+pandas
+openpyxl
+requests
+supabase
+python-dotenv
+pyotp
+pytz
+websocket-client
+scipy
+pyarrow
+google-auth
+google-api-python-client
