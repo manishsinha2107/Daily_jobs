@@ -21,6 +21,6 @@ jobs:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
           GDRIVE_SERVICE_ACCOUNT_JSON: ${{ secrets.GDRIVE_SERVICE_ACCOUNT_JSON }}
-          GDRIVE_SOURCE_ID: ${{ secrets.GDRIVE_SOURCE_ID }}
-          GDRIVE_DEST_ID: ${{ secrets.GDRIVE_DEST_ID }}
+          SOURCE_FOLDER: ${{ secrets.SOURCE_FOLDER }}
+          DEST_FOLDER: ${{ secrets.DEST_FOLDER }}
         run: python scripts/0_trade_ingestor.py
