@@ -2,32 +2,36 @@ import os
 import sys
 import subprocess
 
-# --- 1. THE "BOOTSTRAP" BLOCK (Self-Sufficient Environment) ---
+# --- 1. BOOTSTRAP (Install Helpers & Set Paths) ---
 def bootstrap():
-    """Checks and installs dependencies before the rest of the script runs."""
-    # Added Shoonya API and TOTP requirements
-    required = ["pandas", "supabase", "python-dotenv", "pyotp", "pytz", "NorenRestApiPy"]
+    # We still need these external helpers for the local NorenApi.py to work
+    required = ["pandas", "supabase", "python-dotenv", "pyotp", "pytz", "websocket-client"]
     try:
-        import supabase
-        import pyotp
-        import pytz
-        from NorenRestApiPy.NorenApi import NorenApi
+        import supabase, pyotp, pytz, dotenv, websocket
     except ImportError:
-        print("📦 Missing libraries detected. Bootstrapping Shoonya Environment...")
+        print("📦 Installing helpers for local Noren library...")
         subprocess.check_call([sys.executable, "-m", "pip", "install", *required])
 
-# Execute the bootstrap immediately
+    # Ensure Python can see the local NorenRestApiPy folder
+    # This adds 'scripts' to the path so 'from NorenRestApiPy.NorenApi import NorenApi' works
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    if script_dir not in sys.path:
+        sys.path.append(script_dir)
+
 bootstrap()
 
-# --- 2. NOW IT IS SAFE TO IMPORT EVERYTHING ELSE ---
+# --- 2. YOUR ORIGINAL IMPORTS ---
 import pyotp
 import pandas as pd
 from datetime import datetime
 import pytz
-from NorenRestApiPy.NorenApi import NorenApi
+# This will now look inside your scripts/NorenRestApiPy folder
+from NorenRestApiPy.NorenApi import NorenApi 
 from supabase import create_client, Client
 from dotenv import load_dotenv
 from collections import defaultdict
+
+
 
 # Load .env (Local PyCharm) or use OS Environment (GitHub)
 if os.path.exists(".env"):
