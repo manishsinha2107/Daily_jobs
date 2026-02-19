@@ -28,8 +28,8 @@ from supabase import create_client, Client
 # --- CONFIGURATION (SECURED) ---
 SUPABASE_URL = os.environ.get("SUPABASE_URL")
 SUPABASE_KEY = os.environ.get("SUPABASE_KEY")
-SOURCE_FOLDER = os.environ.get("GDRIVE_SOURCE_ID")
-DEST_FOLDER = os.environ.get("GDRIVE_DEST_ID")
+SOURCE_FOLDER = os.environ.get("SOURCE_FOLDER")
+DEST_FOLDER = os.environ.get("DEST_FOLDER")
 
 # Initialize Supabase Client
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
