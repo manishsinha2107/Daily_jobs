@@ -16,15 +16,11 @@ jobs:
         with:
           python-version: '3.10'
 
-      - name: Install Dependencies
-        run: |
-          python -m pip install --upgrade pip
-          # ADDED supabase and python-dotenv to the list
-          pip install pandas openpyxl requests google-auth google-auth-oauthlib google-auth-httplib2 google-api-python-client supabase python-dotenv
-
       - name: Run Trade Ingestor
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
           GDRIVE_SERVICE_ACCOUNT_JSON: ${{ secrets.GDRIVE_SERVICE_ACCOUNT_JSON }}
+          GDRIVE_SOURCE_ID: ${{ secrets.GDRIVE_SOURCE_ID }}
+          GDRIVE_DEST_ID: ${{ secrets.GDRIVE_DEST_ID }}
         run: python scripts/0_trade_ingestor.py
