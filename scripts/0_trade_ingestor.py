@@ -1,51 +1,60 @@
 import os
 import sys
 import subprocess
+
+# --- 1. THE "BOOTSTRAP" BLOCK (Must be at the very top) ---
+def bootstrap():
+    """Checks and installs dependencies before the rest of the script runs."""
+    required = ["pandas", "openpyxl", "requests", "supabase", "python-dotenv", "google-auth"]
+    try:
+        # Check if the most 'unique' ones are available
+        import supabase
+        import dotenv
+    except ImportError:
+        print("📦 Missing libraries detected. Bootstrapping environment...")
+        subprocess.check_call([sys.executable, "-m", "pip", "install", *required])
+
+# Execute the bootstrap
+bootstrap()
+
+# --- 2. NOW IT IS SAFE TO IMPORT EVERYTHING ELSE ---
 import re
 import json
+import pandas as pd
+from datetime import datetime
+import requests
 import io
 import platform
-from datetime import datetime
-
-# --- SELF-INSTALLING DEPENDENCIES ---
-def install_if_missing():
-    REQS = ["pandas", "openpyxl", "requests", "google-auth", "supabase"]
-    try:
-        import pandas, requests, google.oauth2, supabase, openpyxl
-    except ImportError:
-        print("📦 Missing libraries detected. Installing self-dependencies...")
-        subprocess.check_call([sys.executable, "-m", "pip", "install", *REQS])
-
-install_if_missing()
-
-# Now safe to import the heavy hitters
-import pandas as pd
-import requests
-from google.oauth2 import service_account
-import google.auth.transport.requests
 from supabase import create_client, Client
+from dotenv import load_dotenv
 
-# --- CONFIGURATION (SECURED) ---
+# --- 3. YOUR ORIGINAL LOGIC CONTINUES ---
+load_dotenv()
+# ... rest of your code
+load_dotenv() 
+
 SUPABASE_URL = os.environ.get("SUPABASE_URL")
 SUPABASE_KEY = os.environ.get("SUPABASE_KEY")
-SOURCE_FOLDER = os.environ.get("GDRIVE_SOURCE_ID")
-DEST_FOLDER = os.environ.get("GDRIVE_DEST_ID")
+SOURCE_FOLDER = os.environ.get("SOURCE_FOLDER")
+DEST_FOLDER = os.environ.get("DEST_FOLDER")
+GDRIVE_JSON = os.environ.get("GDRIVE_SERVICE_ACCOUNT_JSON")
 
 # Initialize Supabase Client
-supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
-
-# Safety Check
-if not all([SUPABASE_URL, SUPABASE_KEY, SOURCE_FOLDER, DEST_FOLDER]):
-    print("❌ ERROR: Missing Environment Variables (URL/KEY/FOLDER_IDs)")
+if not SUPABASE_URL or not SUPABASE_KEY:
+    print("❌ ERROR: Supabase credentials missing!")
     sys.exit(1)
 
-SERVICE_ACCOUNT_INFO = json.loads(os.environ.get("GDRIVE_SERVICE_ACCOUNT_JSON"))
+supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
+
+# Safety Check for Drive
+if not all([SOURCE_FOLDER, DEST_FOLDER, GDRIVE_JSON]):
+    print("❌ ERROR: Google Drive configuration missing!")
+    sys.exit(1)
+
+SERVICE_ACCOUNT_INFO = json.loads(GDRIVE_JSON)
 SCOPES = ['https://www.googleapis.com/auth/drive']
 
-# --- [REST OF YOUR FUNCTIONS: update_heartbeat, get_drive_token, etc.] ---
-# (Keep your existing move_drive_file, get_active_strategies, and run_ingestion as is)
-
-
+# --- [REST OF YOUR LOGIC REMAINS UNCHANGED] ---
 
 # --- STABLE HEARTBEAT REPORTER (GitHub Secret Safe) ---
 def update_heartbeat(status, msg):
