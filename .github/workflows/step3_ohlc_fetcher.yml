@@ -32,4 +32,6 @@ jobs:
           SHOONYA_VC: ${{ secrets.SHOONYA_VC }}
           SHOONYA_API_KEY: ${{ secrets.SHOONYA_API_KEY }}
           SHOONYA_IMEI: ${{ secrets.SHOONYA_IMEI }}
-        run: python scripts/3_smart_ohlc_fetcher.py
+        run: |
+          cd scripts
+          python 3_smart_ohlc_fetcher.py
