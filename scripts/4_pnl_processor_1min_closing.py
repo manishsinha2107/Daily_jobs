@@ -70,14 +70,30 @@ def calculate_intraday_pnl_1min_closing():
     print("🔍 Fetching database state for 1-Min Closing Audit...")
     # --- REPORTING START ---
     report_progress("running", "🔍 Analyzing P&L queue...")
+
+    # --- LOGGING POINT 1: Total Records ---
+    print(f"📊 Total records fetched from Supabase: {len(raw_audit_data)}")
     
     raw_audit_data = fetch_all_verified_records()
+
+        # --- LOGGING POINT 1: Total Records ---
+    print(f"📊 Total records fetched from Supabase: {len(raw_audit_data)}")
+
     if not raw_audit_data: 
+        print("✅ No records found with 'pending' status and valid OHLC data.")
         report_progress("success", "✅ No pending 1-min P&L tasks.")
         return
 
     df_audit = pd.DataFrame(raw_audit_data)
+
+    # --- LOGGING POINT 2: Filtered Pending ---
     df_pending = df_audit[df_audit['pnl_1min_status'] == 'pending']
+    print(f"📥 Pending P&L calculations: {len(df_pending)}")
+    
+    if df_pending.empty:
+        print("🏁 All fetched records are already processed or skipped. Exiting.")
+        report_progress("success", "🏁 All P&L tasks completed.")
+        return
 
     strategy_map = {}
     for _, row in df_pending.iterrows():
