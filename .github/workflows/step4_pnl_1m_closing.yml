@@ -10,8 +10,11 @@ jobs:
       - name: Install
         # ADDED python-dotenv here
         run: pip install pandas numpy supabase python-dotenv
-      - name: Run
+
+      - name: Run PnL Processor
         env:
+          PYTHONPATH: ${{ github.workspace }}/scripts
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
-        run: python scripts/4_pnl_processor_1min_closing.py
+        # ADDED: -u for unbuffered logs and a try/except wrapper check
+        run: python -u scripts/4_pnl_processor_1min_closing.py
