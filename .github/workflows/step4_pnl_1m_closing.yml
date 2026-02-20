@@ -1,0 +1,17 @@
+name: ⏱️ Step 4 - PnL Processor (1min closing)
+on: [workflow_dispatch]
+jobs:
+  run-script:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v4
+        with: { python-version: '3.11' }
+      - name: Install
+        # ADDED python-dotenv here
+        run: pip install pandas numpy supabase python-dotenv
+      - name: Run
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+        run: python scripts/4_pnl_processor_1min_closing.py
