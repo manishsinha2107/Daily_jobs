@@ -1,0 +1,65 @@
+name:  🔑 Daily Data Pipeline
+
+on:
+  workflow_dispatch: # Manual trigger from GitHub UI
+  repository_dispatch:
+    types: [trigger_pipeline] # Trigger from your Cloudflare site
+
+jobs:
+  execute-pipeline:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+
+      - name: Install Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          # Ensure all core requirements are met
+          if [ -f scripts/requirements.txt ]; then pip install -r scripts/requirements.txt; fi
+          # Core engines + Google Auth for Step 0 + Excel parsing
+          pip install pandas numpy supabase google-auth openpyxl requests
+
+      - name: Run Sequence
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+          GDRIVE_SERVICE_ACCOUNT_JSON: ${{ secrets.GDRIVE_SERVICE_ACCOUNT_JSON }}
+          SHOONYA_USER_ID: ${{ secrets.SHOONYA_USER_ID }}
+          SHOONYA_PASSWORD: ${{ secrets.SHOONYA_PASSWORD }}
+          SHOONYA_TOTP_KEY: ${{ secrets.SHOONYA_TOTP_KEY }}
+          SHOONYA_VC: ${{ secrets.SHOONYA_VC }}
+          SHOONYA_API_KEY: ${{ secrets.SHOONYA_API_KEY }}
+          SHOONYA_IMEI: ${{ secrets.SHOONYA_IMEI }}
+          
+        run: |
+          echo "🚀 Starting Step 0: Trade Ingestor (Drive to Supabase)..."
+          python scripts/0_trade_ingestor.py && \
+
+          echo "🚀 Starting Step 1: Broker Tokens..."
+          python scripts/1_update_broker_token.py && \
+          
+          echo "🚀 Starting Step 2: Trade Verification..."
+          python scripts/2_update_strategy_trades_verification.py && \
+          
+          echo "🚀 Starting Step 3: OHLC Fetcher..."
+          python scripts/3_smart_ohlc_fetcher.py && \
+          
+          echo "🚀 Starting Step 4: PnL Closing..."
+          python scripts/4_pnl_processor_1min_closing.py && \
+          
+          echo "🚀 Starting Step 5: PnL OHLC..."
+          python scripts/5_pnl_processor_1min_ohlc.py && \
+
+          echo "🚀 Starting Step 6: Daily P&L Sync (Vault Calculator)..."
+          python scripts/6_pnl_refresh.py && \
+          
+          echo "🚀 Starting Step 7: Expectancy Engine (Analytics)..."
+          python scripts/7_expectancy_calc.py && \
+          
+          echo "✅ FULL PIPELINE COMPLETED SUCCESSFULLY!"
