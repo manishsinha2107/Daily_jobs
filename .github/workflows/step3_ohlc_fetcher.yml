@@ -23,7 +23,6 @@ jobs:
 
       - name: Run OHLC Fetcher
         env:
-          PYTHONPATH: ${{ github.workspace }}/scripts
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
           SHOONYA_USER_ID: ${{ secrets.SHOONYA_USER_ID }}
@@ -32,6 +31,4 @@ jobs:
           SHOONYA_VC: ${{ secrets.SHOONYA_VC }}
           SHOONYA_API_KEY: ${{ secrets.SHOONYA_API_KEY }}
           SHOONYA_IMEI: ${{ secrets.SHOONYA_IMEI }}
-        run: |
-          cd scripts
-          python 3_smart_ohlc_fetcher.py
+        run: python scripts/3_smart_ohlc_fetcher.py
