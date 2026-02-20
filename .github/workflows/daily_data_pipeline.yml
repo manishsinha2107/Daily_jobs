@@ -1,9 +1,9 @@
-name:  🔑 Daily Data Pipeline
+name: 🔑 Daily Data Pipeline
 
 on:
-  workflow_dispatch: # Manual trigger from GitHub UI
+  workflow_dispatch:
   repository_dispatch:
-    types: [trigger_pipeline] # Trigger from your Cloudflare site
+    types: [trigger_pipeline]
 
 jobs:
   execute-pipeline:
@@ -13,20 +13,21 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Set up Python
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v5
         with:
-          python-version: '3.11'
+          python-version: '3.10'
 
       - name: Install Dependencies
         run: |
           python -m pip install --upgrade pip
-          # Ensure all core requirements are met
-          if [ -f scripts/requirements.txt ]; then pip install -r scripts/requirements.txt; fi
-          # Core engines + Google Auth for Step 0 + Excel parsing
-          pip install pandas numpy supabase google-auth openpyxl requests
+          # Combining all requirements for all 7 scripts
+          pip install pandas numpy supabase google-auth openpyxl requests python-dotenv pyotp pytz websocket-client
 
       - name: Run Sequence
         env:
+          # CRITICAL: Ensures Script 3 finds your local Noren library
+          PYTHONPATH: ${{ github.workspace }}/scripts
+          
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
           GDRIVE_SERVICE_ACCOUNT_JSON: ${{ secrets.GDRIVE_SERVICE_ACCOUNT_JSON }}
@@ -38,7 +39,7 @@ jobs:
           SHOONYA_IMEI: ${{ secrets.SHOONYA_IMEI }}
           
         run: |
-          echo "🚀 Starting Step 0: Trade Ingestor (Drive to Supabase)..."
+          echo "🚀 Starting Step 0: Trade Ingestor..."
           python scripts/0_trade_ingestor.py && \
 
           echo "🚀 Starting Step 1: Broker Tokens..."
@@ -56,10 +57,10 @@ jobs:
           echo "🚀 Starting Step 5: PnL OHLC..."
           python scripts/5_pnl_processor_1min_ohlc.py && \
 
-          echo "🚀 Starting Step 6: Daily P&L Sync (Vault Calculator)..."
+          echo "🚀 Starting Step 6: Daily P&L Sync..."
           python scripts/6_pnl_refresh.py && \
           
-          echo "🚀 Starting Step 7: Expectancy Engine (Analytics)..."
+          echo "🚀 Starting Step 7: Expectancy Engine..."
           python scripts/7_expectancy_calc.py && \
           
           echo "✅ FULL PIPELINE COMPLETED SUCCESSFULLY!"
