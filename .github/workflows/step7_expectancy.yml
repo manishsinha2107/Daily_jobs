@@ -1,0 +1,31 @@
+name: 🔑 Step 7 - Expectancy Table
+
+on:
+  workflow_dispatch: # Allows manual trigger from GitHub Actions UI
+
+jobs:
+  test-expectancy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+
+      - name: Install Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          # PATCH: Added python-dotenv to support environment loading
+          pip install pandas numpy supabase python-dotenv
+
+      - name: Run Expectancy Analytics Test
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+        run: |
+          echo "🧪 Running Isolated Expectancy Calculation Test..."
+          # This script should be pointed to your '_shadow' tables for safety
+          python scripts/7_expectancy_calc.py
