@@ -37,6 +37,9 @@ jobs:
           SHOONYA_VC: ${{ secrets.SHOONYA_VC }}
           SHOONYA_API_KEY: ${{ secrets.SHOONYA_API_KEY }}
           SHOONYA_IMEI: ${{ secrets.SHOONYA_IMEI }}
+
+          SOURCE_FOLDER: ${{ secrets.SOURCE_FOLDER }}
+          DEST_FOLDER: ${{ secrets.DEST_FOLDER }}
           
         run: |
           echo "🚀 Starting Step 0: Trade Ingestor..."
