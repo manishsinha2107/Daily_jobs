@@ -23,6 +23,7 @@ jobs:
 
       - name: Run OHLC Fetcher
         env:
+          PYTHONPATH: ${{ github.workspace }}/scripts
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
           SHOONYA_USER_ID: ${{ secrets.SHOONYA_USER_ID }}
