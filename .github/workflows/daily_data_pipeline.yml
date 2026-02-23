@@ -25,9 +25,7 @@ jobs:
 
       - name: Run Sequence
         env:
-          # CRITICAL: Ensures Script 3 finds your local Noren library
           PYTHONPATH: ${{ github.workspace }}/scripts
-          
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
           GDRIVE_SERVICE_ACCOUNT_JSON: ${{ secrets.GDRIVE_SERVICE_ACCOUNT_JSON }}
@@ -37,33 +35,33 @@ jobs:
           SHOONYA_VC: ${{ secrets.SHOONYA_VC }}
           SHOONYA_API_KEY: ${{ secrets.SHOONYA_API_KEY }}
           SHOONYA_IMEI: ${{ secrets.SHOONYA_IMEI }}
-
           SOURCE_FOLDER: ${{ secrets.SOURCE_FOLDER }}
           DEST_FOLDER: ${{ secrets.DEST_FOLDER }}
-          
         run: |
-          echo "🚀 Starting Step 0: Trade Ingestor..."
-          python scripts/0_trade_ingestor.py && \
+          echo "🚀 Step 0: Trade Ingestor"
+          python scripts/0_trade_ingestor.py
 
-          echo "🚀 Starting Step 1: Broker Tokens..."
-          python scripts/1_update_broker_token.py && \
-          
-          echo "🚀 Starting Step 2: Trade Verification..."
-          python scripts/2_update_strategy_trades_verification.py && \
-          
-          echo "🚀 Starting Step 3: OHLC Fetcher..."
-          python scripts/3_smart_ohlc_fetcher.py && \
-          
-          echo "🚀 Starting Step 4: PnL Closing..."
-          python scripts/4_pnl_processor_1min_closing.py && \
-          
-          echo "🚀 Starting Step 5: PnL OHLC..."
-          python scripts/5_pnl_processor_1min_ohlc.py && \
+          echo "🚀 Step 1: Broker Tokens"
+          python scripts/1_update_broker_token.py
 
-          echo "🚀 Starting Step 6: Daily P&L Sync..."
-          python scripts/6_pnl_refresh.py && \
-          
-          echo "🚀 Starting Step 7: Expectancy Engine..."
-          python scripts/7_expectancy_calc.py && \
-          
+          echo "🚀 Step 2: Trade Verification"
+          python scripts/2_update_strategy_trades_verification.py
+
+          echo "🚀 Step 3: OHLC Fetcher"
+          python scripts/3_smart_ohlc_fetcher.py
+
+          echo "🚀 Step 4: PnL Closing (1-Min)"
+          python scripts/4_pnl_processor_1min_closing.py
+
+          echo "🚀 Step 5: PnL OHLC (High-Fi)"
+          python scripts/5_pnl_processor_1min_ohlc.py
+
+          echo "🚀 Step 6: Daily P&L Sync"
+          python scripts/6_pnl_refresh.py
+
+          echo "🚀 Step 7: Expectancy Engine"
+          python scripts/7_expectancy_calc.py
+
           echo "✅ FULL PIPELINE COMPLETED SUCCESSFULLY!"
+
+          
