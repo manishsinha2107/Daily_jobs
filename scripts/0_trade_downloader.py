@@ -20,13 +20,15 @@ SOURCE_FOLDER = os.environ.get("SOURCE_FOLDER")
 SERVICE_ACCOUNT_INFO = json.loads(os.environ.get("GDRIVE_SERVICE_ACCOUNT_JSON"))
 SCOPES = ['https://www.googleapis.com/auth/drive']
 
+
+
 def upload_to_drive(file_path, file_name):
     log(f"📤 Uploading {file_name} to Drive...")
     try:
         creds = service_account.Credentials.from_service_account_info(SERVICE_ACCOUNT_INFO, scopes=SCOPES)
         service = build('drive', 'v3', credentials=creds)
         
-        # 1. Check for duplicates to save time/bandwidth
+        # 1. Broad Search for Duplicate (including All Drives/Shared)
         query = f"name = '{file_name}' and '{SOURCE_FOLDER}' in parents and trashed = false"
         existing_files = service.files().list(
             q=query, 
@@ -39,7 +41,7 @@ def upload_to_drive(file_path, file_name):
             log(f"⏭️ File {file_name} already exists. Skipping.")
             return True
 
-        # 2. Metadata must include the parent folder
+        # 2. File Metadata
         file_metadata = {
             'name': file_name, 
             'parents': [SOURCE_FOLDER]
@@ -48,14 +50,14 @@ def upload_to_drive(file_path, file_name):
         mime = 'text/csv' if file_name.endswith('.csv') else 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
         
         with open(file_path, 'rb') as f:
-            # resumable=True is highly recommended for cloud environments
-            media = MediaIoBaseUpload(io.BytesIO(f.read()), mimetype=mime, resumable=True)
+            # We use a non-resumable upload for files this small to avoid the quota-check handshake issues
+            media = MediaIoBaseUpload(io.BytesIO(f.read()), mimetype=mime)
             
-            # 3. CRITICAL: supportsAllDrives=True allows using the parent's quota
+            # 3. CRITICAL: supportsAllDrives=True combined with specific fields
             file = service.files().create(
                 body=file_metadata, 
                 media_body=media, 
-                fields='id',
+                fields='id, name',
                 supportsAllDrives=True 
             ).execute()
             
@@ -64,7 +66,12 @@ def upload_to_drive(file_path, file_name):
                 return True
     except Exception as e:
         log(f"⚠️ Drive Upload Failed: {e}")
+        # Detailed log for quota issues
+        if "storageQuotaExceeded" in str(e):
+            log("💡 TIP: Go to your Google Drive folder, right-click, and ensure the Service Account email is an 'Editor'.")
         return False
+
+
 
 async def run_smart_downloader():
     log("📡 Fetching strategies from Supabase...")
