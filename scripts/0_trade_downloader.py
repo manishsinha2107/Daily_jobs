@@ -20,28 +20,24 @@ SOURCE_FOLDER = os.environ.get("SOURCE_FOLDER")
 SERVICE_ACCOUNT_INFO = json.loads(os.environ.get("GDRIVE_SERVICE_ACCOUNT_JSON"))
 SCOPES = ['https://www.googleapis.com/auth/drive']
 
-
-
 def upload_to_drive(file_path, file_name):
     log(f"📤 Uploading {file_name} to Drive...")
     try:
         creds = service_account.Credentials.from_service_account_info(SERVICE_ACCOUNT_INFO, scopes=SCOPES)
         service = build('drive', 'v3', credentials=creds)
         
-        # 1. Broad Search for Duplicate (including All Drives/Shared)
+        # Check for existing file
         query = f"name = '{file_name}' and '{SOURCE_FOLDER}' in parents and trashed = false"
         existing_files = service.files().list(
             q=query, 
             fields="files(id)",
-            supportsAllDrives=True,
-            includeItemsFromAllDrives=True
+            supportsAllDrives=True
         ).execute().get('files', [])
         
         if existing_files:
             log(f"⏭️ File {file_name} already exists. Skipping.")
             return True
 
-        # 2. File Metadata
         file_metadata = {
             'name': file_name, 
             'parents': [SOURCE_FOLDER]
@@ -50,15 +46,16 @@ def upload_to_drive(file_path, file_name):
         mime = 'text/csv' if file_name.endswith('.csv') else 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
         
         with open(file_path, 'rb') as f:
-            # We use a non-resumable upload for files this small to avoid the quota-check handshake issues
-            media = MediaIoBaseUpload(io.BytesIO(f.read()), mimetype=mime)
+            file_content = f.read()
+            media = MediaIoBaseUpload(io.BytesIO(file_content), mimetype=mime, resumable=False)
             
-            # 3. CRITICAL: supportsAllDrives=True combined with specific fields
+            # CRITICAL ATTEMPT: We use the 'create' method but explicitly ignore 
+            # the service account's own quota by targeting the parent folder
             file = service.files().create(
                 body=file_metadata, 
                 media_body=media, 
-                fields='id, name',
-                supportsAllDrives=True 
+                fields='id',
+                supportsAllDrives=True
             ).execute()
             
             if file.get('id'):
@@ -66,12 +63,9 @@ def upload_to_drive(file_path, file_name):
                 return True
     except Exception as e:
         log(f"⚠️ Drive Upload Failed: {e}")
-        # Detailed log for quota issues
-        if "storageQuotaExceeded" in str(e):
-            log("💡 TIP: Go to your Google Drive folder, right-click, and ensure the Service Account email is an 'Editor'.")
+        # If this STILL fails, the only remaining option is to use a 
+        # Shared Drive or perform a 'Permissions.create' to transfer ownership
         return False
-
-
 
 async def run_smart_downloader():
     log("📡 Fetching strategies from Supabase...")
@@ -102,22 +96,16 @@ async def run_smart_downloader():
                 await page.goto("https://tradetron.tech/deployed-strategies", wait_until="load", timeout=90000)
                 
                 login_area = page.locator('#main')
-                log("🔒 Entering credentials...")
                 await login_area.locator('input[name="email"]').fill(email)
                 await login_area.locator('input[name="password"]').fill(group.iloc[0]['tt_password'])
 
                 altcha = login_area.locator('altcha-widget')
                 if await altcha.is_visible():
-                    log("🔘 Solving ALTCHA...")
                     await altcha.locator('.altcha-checkbox').click()
                     await altcha.locator('text=Verified').wait_for(state="visible", timeout=30000)
-                    log("✅ Verified.")
 
                 await login_area.locator('button:has-text("Sign In")').click()
-                
-                log("⏳ Waiting for Dashboard...")
                 await page.wait_for_selector('#search_input', timeout=60000)
-                log(f"🔓 Dashboard Loaded for {email}")
 
                 for _, row in group.iterrows():
                     strat_name = str(row['strategy_name']).strip()
