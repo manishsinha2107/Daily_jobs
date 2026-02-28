@@ -59,26 +59,28 @@ async def run_smart_downloader():
             try:
                 log(f"🔑 [{account_idx}/{len(grouped)}] Target: {email}")
                 
-                # LEGACY TRICK: Go directly to Deployed Strategies
+                # Direct navigation to Deployed Strategies
                 await page.goto("https://tradetron.tech/deployed-strategies", wait_until="load", timeout=90000)
                 
-                # Check if we are at login page (standard behavior if not logged in)
-                if "login" in page.url or await page.locator('input[name="email"]').is_visible():
+                # Check if we are at login page
+                if "login" in page.url or await page.locator('#main input[name="email"]').is_visible():
                     log("🔒 Login required. Filling credentials...")
-                    await page.locator('input[name="email"]').fill(email)
-                    await page.locator('input[name="password"]').fill(group.iloc[0]['tt_password'])
+                    
+                    # SCOPED LOCATORS TO AVOID STRICT MODE VIOLATION
+                    login_area = page.locator('#main')
+                    await login_area.locator('input[name="email"]').fill(email)
+                    await login_area.locator('input[name="password"]').fill(group.iloc[0]['tt_password'])
 
                     # Captcha Solver
-                    altcha = page.locator('#main altcha-widget')
+                    altcha = login_area.locator('altcha-widget')
                     if await altcha.is_visible():
                         log("🔘 Solving ALTCHA...")
                         await altcha.locator('.altcha-checkbox').click()
                         await altcha.locator('text=Verified').wait_for(state="visible", timeout=30000)
                         log("✅ Verified.")
 
-                    await page.locator('button:has-text("Sign In")').click()
+                    await login_area.locator('button:has-text("Sign In")').click()
                 
-                # Wait for Deployed Page to load
                 log("⏳ Waiting for Deployed Strategies page...")
                 await page.wait_for_selector('#search_input', timeout=60000)
                 log("🔓 Page Ready.")
@@ -87,25 +89,20 @@ async def run_smart_downloader():
                     strat_name = str(row['strategy_name']).strip()
                     log(f"🔍 Searching: {strat_name}")
                     
-                    # Search logic from Legacy
-                    await page.locator('#search_input').fill("") # Clear
+                    await page.locator('#search_input').fill("")
                     await page.locator('#search_input').fill(strat_name)
-                    await asyncio.sleep(4) # Legacy used 3s, giving 4s for cloud latency
+                    await asyncio.sleep(4) 
 
-                    # Improved Container Locator based on Legacy XPath logic
+                    # Legacy-inspired container locator
                     container = page.locator(f"div.strategy__section:has(a:text-is('{strat_name}'))").first
                     
                     if await container.count() > 0:
                         status_text = await container.inner_text()
                         if "Exited" in status_text:
                             log(f"🎯 {strat_name} is 'Exited'. Downloading...")
-                            
-                            # Open Menu
                             await container.locator('button[id*="More"]').click()
                             
-                            # Catch Download
                             async with page.expect_download() as download_info:
-                                # Target the specific 'Download Data' link
                                 await page.locator('a:has-text("Download Data")').click()
                             
                             download = await download_info.value
