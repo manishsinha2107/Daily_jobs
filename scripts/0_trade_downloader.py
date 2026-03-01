@@ -21,50 +21,42 @@ SERVICE_ACCOUNT_INFO = json.loads(os.environ.get("GDRIVE_SERVICE_ACCOUNT_JSON"))
 SCOPES = ['https://www.googleapis.com/auth/drive']
 
 def upload_to_drive(file_path, file_name):
-    log(f"📤 Uploading {file_name} to Drive...")
+    log(f"📤 GitHub Action: Uploading {file_name} (Impersonating Manish)...")
     try:
-        creds = service_account.Credentials.from_service_account_info(SERVICE_ACCOUNT_INFO, scopes=SCOPES)
+        # 1. Parse the Secret String from GitHub Environment
+        service_account_info = json.loads(os.environ.get("GDRIVE_SERVICE_ACCOUNT_JSON"))
+        folder_id = os.environ.get("SOURCE_FOLDER")
+        
+        # 2. Build Credentials with Workspace Impersonation
+        creds = service_account.Credentials.from_service_account_info(
+            service_account_info, 
+            scopes=SCOPES
+        ).with_subject("manish.kumar@ensuringsuccess.in")
+        
         service = build('drive', 'v3', credentials=creds)
         
-        # Check for existing file
-        query = f"name = '{file_name}' and '{SOURCE_FOLDER}' in parents and trashed = false"
-        existing_files = service.files().list(
-            q=query, 
-            fields="files(id)",
-            supportsAllDrives=True
-        ).execute().get('files', [])
-        
-        if existing_files:
-            log(f"⏭️ File {file_name} already exists. Skipping.")
-            return True
-
+        # 3. Metadata and Upload
         file_metadata = {
             'name': file_name, 
-            'parents': [SOURCE_FOLDER]
+            'parents': [folder_id]
         }
         
-        mime = 'text/csv' if file_name.endswith('.csv') else 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
-        
+        # We use MediaIoBaseUpload with the existing file path
         with open(file_path, 'rb') as f:
-            file_content = f.read()
-            media = MediaIoBaseUpload(io.BytesIO(file_content), mimetype=mime, resumable=False)
-            
-            # CRITICAL ATTEMPT: We use the 'create' method but explicitly ignore 
-            # the service account's own quota by targeting the parent folder
+            media = MediaIoBaseUpload(io.BytesIO(f.read()), mimetype='text/csv', resumable=False)
             file = service.files().create(
                 body=file_metadata, 
                 media_body=media, 
                 fields='id',
-                supportsAllDrives=True
+                supportsAllDrives=True # Required for Workspace Business folders
             ).execute()
             
             if file.get('id'):
-                log(f"✅ Drive Upload Success. File ID: {file.get('id')}")
+                log(f"✅ GitHub Upload Success. ID: {file.get('id')}")
                 return True
+                
     except Exception as e:
         log(f"⚠️ Drive Upload Failed: {e}")
-        # If this STILL fails, the only remaining option is to use a 
-        # Shared Drive or perform a 'Permissions.create' to transfer ownership
         return False
 
 async def run_smart_downloader():
