@@ -62,14 +62,13 @@ def upload_to_drive(file_path, file_name):
 async def run_smart_downloader():
     log("📡 Fetching strategies from Supabase...")
     supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
-    res = supabase.table("strategy_mapping").select("tt_user_id, tt_password, strategy_name").eq("deployment_status", "Active").eq("deployment_type", "Live Offline").execute()
-    
+    res = supabase.table("strategies").select("user_email, email_password, strategy_name").eq("status", "Active").eq("deployment_type", "Live Offline").execute()    
     if not res.data:
         log("🏁 No strategies found.")
         return
 
     df = pd.DataFrame(res.data)
-    grouped = df.groupby('tt_user_id')
+    grouped = df.groupby('user_email')
 
     async with async_playwright() as p:
         log("🌐 Launching Chromium...")
@@ -89,7 +88,7 @@ async def run_smart_downloader():
                 
                 login_area = page.locator('#main')
                 await login_area.locator('input[name="email"]').fill(email)
-                await login_area.locator('input[name="password"]').fill(group.iloc[0]['tt_password'])
+                await login_area.locator('input[name="password"]').fill(group.iloc[0]['email_password'])
 
                 altcha = login_area.locator('altcha-widget')
                 if await altcha.is_visible():
