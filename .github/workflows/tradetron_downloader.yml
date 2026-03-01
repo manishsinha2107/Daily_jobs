@@ -1,4 +1,4 @@
-name: TradeTron Smart Downloader
+name: 🔑 TradeTron Smart Downloader
 
 on:
 
@@ -24,15 +24,15 @@ jobs:
           pip install pandas supabase playwright google-api-python-client google-auth python-dotenv
           # Install Playwright browser and its system dependencies
           playwright install chromium --with-deps
-
+          
       - name: 🚀 Run Smart Downloader
         env:
+          PYTHONUNBUFFERED: "1" # Ensures real-time logging
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
           SOURCE_FOLDER: ${{ secrets.SOURCE_FOLDER }}
           GDRIVE_SERVICE_ACCOUNT_JSON: ${{ secrets.GDRIVE_SERVICE_ACCOUNT_JSON }}
         run: |
-          # Ensure the script path matches your repository structure
           python scripts/0_trade_downloader.py
 
       - name: 📁 Upload Logs (Optional)
