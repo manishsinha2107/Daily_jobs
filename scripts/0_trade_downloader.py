@@ -153,4 +153,4 @@ async def run_smart_downloader():
         log(f"❌ Critical Global Error: {e}")
 
 if __name__ == "__main__":
-    async_run(run_smart_downloader())
+    asyncio.run(run_smart_downloader())
