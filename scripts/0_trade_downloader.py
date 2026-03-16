@@ -76,10 +76,6 @@ async def run_smart_downloader():
         #.eq("status", "Active") \
         #.in_("deployment_type", ["Live Offline", "Live Auto"]) \
         #.execute()
-
-           
-
-how to change it to filter for both live offline and live auto
     
     
     if not res.data:
