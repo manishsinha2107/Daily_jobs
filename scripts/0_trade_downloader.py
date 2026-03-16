@@ -70,7 +70,12 @@ async def run_smart_downloader():
     log("📡 Fetching strategies from Supabase...")
     
     supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
-    res = supabase.table("strategies").select("user_email, email_password, strategy_name").eq("status", "Active").eq("deployment_type", "Live Offline").execute()    
+    res = supabase.table("strategies") \
+        .select("user_email, email_password, strategy_name") \
+        .eq("status", "Active") \
+        .in_("deployment_type", ["Live Offline", "Live Auto"]) \
+        .execute()
+    
     
     if not res.data:
         update_heartbeat("success", "🏁 No active strategies found.")
