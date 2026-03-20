@@ -97,8 +97,23 @@ def run_pnl_refresh():
                 s_meta = active_strats[active_strats['strategy_id'] == sid].iloc[0]
                 t_date_obj = datetime.strptime(t_date_str, "%Y-%m-%d")
                 
-                m_deploy = df_deploy[(df_deploy['strategy_id'] == sid) & (df_deploy['month'] == t_date_obj.strftime("%B %Y"))]
-                multiplier = int(m_deploy.iloc[0]['multiplier']) if not m_deploy.empty else 1
+                # 1. Format the trade date to match the 1st of the month (YYYY-MM-DD)
+                target_month_iso = t_date_obj.replace(day=1).strftime("%Y-%m-%d")
+                
+                # 2. Filter using standardized strings to ensure the Date object matches
+                m_deploy = df_deploy[
+                    (df_deploy['strategy_id'] == sid) & 
+                    (pd.to_datetime(df_deploy['month']).dt.strftime("%Y-%m-%d") == target_month_iso)
+                ]
+                
+                # 3. STRICT CHECK: Raise an error if the deployment record is missing
+                if m_deploy.empty:
+                    error_msg = f"❌ Error: ID {sid} has no multiplier defined for {t_date_obj.strftime('%b %Y')} in live_deployments."
+                    print(error_msg)
+                    report_progress("error", error_msg)
+                    raise KeyError(error_msg) # Kills the script; prevents data corruption
+                
+                multiplier = float(m_deploy.iloc[0]['multiplier'])
                 
                 hist_lot = get_lot_size(df_lots, s_meta['index_name'], t_date_obj)
                 eff_cap = unit_cap_map[sid] * hist_lot * multiplier
