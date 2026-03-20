@@ -113,7 +113,7 @@ def run_pnl_refresh():
                     report_progress("error", error_msg)
                     raise KeyError(error_msg) # Kills the script; prevents data corruption
                 
-                multiplier = float(m_deploy.iloc[0]['multiplier'])
+                multiplier = int(float(m_deploy.iloc[0]['multiplier']))
                 
                 hist_lot = get_lot_size(df_lots, s_meta['index_name'], t_date_obj)
                 eff_cap = unit_cap_map[sid] * hist_lot * multiplier
@@ -133,7 +133,7 @@ def run_pnl_refresh():
                     "deployment_type": s_meta['deployment_type'],
                     "pnl": round(last_pnl, 2),
                     "eff_capital": round(eff_cap, 2),
-                    "multiplier": multiplier,
+                    "multiplier": int(multiplier),
                     "is_win": 1 if last_pnl > 0 else 0,
                     "pnl_percent": round((last_pnl / eff_cap * 100), 4) if eff_cap > 0 else 0
                 })
