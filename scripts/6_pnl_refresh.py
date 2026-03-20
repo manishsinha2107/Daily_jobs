@@ -69,10 +69,10 @@ def run_pnl_refresh():
         existing_keys = set()
 
     # FILTER: ACTIVE AND LIVE AUTO
-    # active_strats = df_strategies[(df_strategies['status'] == 'Active') & (df_strategies['deployment_type'] == 'Live Auto')]
+    active_strats = df_strategies[(df_strategies['status'] == 'Active') & (df_strategies['deployment_type'] == 'Live Auto')]
     
     # FILTER: ONLY LIVE AUTO (Ignoring Status)
-    active_strats = df_strategies[df_strategies['deployment_type'] == 'Live Auto']
+    # active_strats = df_strategies[df_strategies['deployment_type'] == 'Live Auto']
     
     active_ids = active_strats['strategy_id'].astype(int).tolist()
 
