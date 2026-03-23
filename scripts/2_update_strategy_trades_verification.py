@@ -166,46 +166,7 @@ def sync_audit_to_shadow():
         offset += 1000
     print(f"   - Mapped {len(existing_cache_map)} relevant Symbol-Date pairs from Cache.")
 
-    # 4. Process Data & Assign OHLC Status
-    print("\n⚙️  Step 4: Processing trades and preparing payload...")
-    payload = []
-    # stats[strategy_name][trade_date][status] = count
-    stats = defaultdict(lambda: defaultdict(lambda: defaultdict(int)))
-
-    for row in new_audit_rows:
-        b_symbol = get_shoonya_tsym(row['instrument'])
-        trade_date = row['trade_date']
-        strat_name = row.get('strategy_name', 'Unknown')
-
-        cache_key = f"{b_symbol}_{trade_date}"
-
-        if cache_key in existing_cache_map:
-            status = "verified_ohlc_present"
-        elif trade_date >= DYNAMIC_CUTOFF:
-            status = "pending_api_search"
-        else:
-            status = "historical_data_unavailable_at_broker"
-
-        # Update Enhanced Stats (Nested by Strategy then Date)
-        stats[strat_name][trade_date][status] += 1
-        stats[strat_name][trade_date]['total'] += 1
-
-        payload.append({
-            "id": row['id'],
-            "strategy_id": row['strategy_id'],
-            "strategy_name": strat_name,
-            "trade_date": trade_date,
-            "instrument": row['instrument'],
-            "txn_time": row['txn_time'],
-            "txn_type": row['txn_type'],
-            "quantity": row['quantity'],
-            "price": row['price'],
-            "run_counter": row['run_counter'],
-            "created_at": row['created_at'],
-            "broker_symbol": b_symbol,
-            "ohlc_status": status,
-            "pnl_status": "pending",
-            "pnl_1min_sta# 4. Process Data & Assign OHLC Status
+# 4. Process Data & Assign OHLC Status
     print("\n⚙️  Step 4: Processing trades and preparing payload...")
     unique_payloads = {}  # Changed from list to dict for internal de-duplication
     stats = defaultdict(lambda: defaultdict(lambda: defaultdict(int)))
@@ -248,7 +209,8 @@ def sync_audit_to_shadow():
         }
 
     # Convert back to list for batching
-    payload = list(unique_payloads.values())tus": "pending"})
+    payload = list(unique_payloads.values())
+
 
     # 5. Bulk Upsert & Update Audit Status
     if payload:
