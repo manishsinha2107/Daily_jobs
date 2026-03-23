@@ -205,19 +205,63 @@ def sync_audit_to_shadow():
             "broker_symbol": b_symbol,
             "ohlc_status": status,
             "pnl_status": "pending",
-            "pnl_1min_status": "pending"
-        })
+            "pnl_1min_sta# 4. Process Data & Assign OHLC Status
+    print("\n⚙️  Step 4: Processing trades and preparing payload...")
+    unique_payloads = {}  # Changed from list to dict for internal de-duplication
+    stats = defaultdict(lambda: defaultdict(lambda: defaultdict(int)))
 
-    # 5. Bulk Insert & Update Audit Status
+    for row in new_audit_rows:
+        row_id = row['id']
+        b_symbol = get_shoonya_tsym(row['instrument'])
+        trade_date = row['trade_date']
+        strat_name = row.get('strategy_name', 'Unknown')
+
+        cache_key = f"{b_symbol}_{trade_date}"
+
+        if cache_key in existing_cache_map:
+            status = "verified_ohlc_present"
+        elif trade_date >= DYNAMIC_CUTOFF:
+            status = "pending_api_search"
+        else:
+            status = "historical_data_unavailable_at_broker"
+
+        stats[strat_name][trade_date][status] += 1
+        stats[strat_name][trade_date]['total'] += 1
+
+        # Store in dict using ID as key to prevent local duplicates
+        unique_payloads[row_id] = {
+            "id": row_id,
+            "strategy_id": row['strategy_id'],
+            "strategy_name": strat_name,
+            "trade_date": trade_date,
+            "instrument": row['instrument'],
+            "txn_time": row['txn_time'],
+            "txn_type": row['txn_type'],
+            "quantity": row['quantity'],
+            "price": row['price'],
+            "run_counter": row['run_counter'],
+            "created_at": row['created_at'],
+            "broker_symbol": b_symbol,
+            "ohlc_status": status,
+            "pnl_status": "pending",
+            "pnl_1min_status": "pending"
+        }
+
+    # Convert back to list for batching
+    payload = list(unique_payloads.values())tus": "pending"})
+
+    # 5. Bulk Upsert & Update Audit Status
     if payload:
         print(f"\n📤 Step 5: Syncing {len(payload)} trades in batches of 500...")
-        # --- REPORTING FINAL SYNC ---
         report_progress("running", f"📤 Syncing {len(payload)} rows...")
         
         for i in range(0, len(payload), 500):
             batch = payload[i:i+500]
             batch_ids = [item['id'] for item in batch]
-            supabase.table("strategy_trades_verification").insert(batch).execute()
+            
+            # Changed .insert() to .upsert() with on_conflict
+            supabase.table("strategy_trades_verification").upsert(batch, on_conflict="id").execute()
+            
             supabase.table("strategy_trades_audit") \
                 .update({"status": "synced_to_verification"}) \
                 .in_("id", batch_ids).execute()
