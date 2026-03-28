@@ -59,7 +59,7 @@ async def run_subscriber_pnl_sync():
         } for row in ledger_res.data
     }
     target_sids = list(sid_map.keys())
-    log(f"✅ Found {len(target_sids)} active strategies. Delta Sync enabled.")
+    log(f"✅ Found {len(target_sids)} active strategies. Delta Sync + Creator Sync enabled.")
 
     async with async_playwright() as p:
         browser = await p.chromium.launch(headless=True, args=['--no-sandbox'])
@@ -112,29 +112,28 @@ async def run_subscriber_pnl_sync():
                 if not sid or sid not in target_sids: continue
 
                 db_max_counter = last_counters.get(sid, 0)
-                strat_name = await card.locator('.deployed__archived-head a').first.inner_text()
                 
-                # --- ROBUST CAPITAL EXTRACTION ---
-                # Search for any text containing "Capital:" inside the info section
+                # --- SCRAPE HEADER INFO (Name & Creator) ---
+                header_links = card.locator('.deployed__archived-head a')
+                strat_name = await header_links.nth(0).inner_text()
+                
+                creator_name = ""
+                if await header_links.count() > 1:
+                    raw_creator = await header_links.nth(1).inner_text()
+                    creator_name = raw_creator.replace("by ", "").strip()
+                
+                # --- SCRAPE CAPITAL ---
                 info_section = card.locator('.deployed__archived-info')
                 info_text = await info_section.inner_text()
                 
                 cap_value = 0.0
-                # Regex looks for "Capital:" followed by optional symbols, then the number and multiplier (k/L)
                 cap_match = re.search(r'Capital:\s*₹?\s*([\d\.]+)\s*([kKLl]?)', info_text)
-                
                 if cap_match:
                     base_val = float(cap_match.group(1))
                     multiplier = cap_match.group(2).lower()
-                    
-                    if multiplier == 'k':
-                        cap_value = base_val * 1000
-                    elif multiplier == 'l':
-                        cap_value = base_val * 100000
-                    else:
-                        cap_value = base_val
+                    cap_value = base_val * 1000 if multiplier == 'k' else (base_val * 100000 if multiplier == 'l' else base_val)
                 
-                log(f"🎯 Strategy: {strat_name} (SID: {sid}) | Cap: {cap_value} | DB Max: {db_max_counter}")
+                log(f"🎯 Strategy: {strat_name} | Creator: {creator_name} | SID: {sid} | Cap: {cap_value}")
 
                 deployed_info = await card.locator('.deployed__archived-info').inner_text()
                 year_match = re.search(r'20\d{2}', deployed_info)
@@ -182,12 +181,16 @@ async def run_subscriber_pnl_sync():
                     await page.locator('#notificationLog .modal__close').click()
                     await page.wait_for_selector('#notificationLog', state="hidden")
 
+                # Update Ledger with Creator name and last sync time
+                supabase.table("strategy_ledger").update({
+                    "strategy_creator": creator_name,
+                    "last_updated_at": "now()"
+                }).eq("strategy_id", sid).execute()
+
                 if processed_count > 0:
                     log(f"✅ Synced {processed_count} new counters for {sid}")
                 else:
                     log(f"⏭️ No new data for {sid}")
-
-                supabase.table("strategy_ledger").update({"last_updated_at": "now()"}).eq("strategy_id", sid).execute()
 
             update_heartbeat("success", f"✨ Successfully synced {len(target_sids)} strategies.")
 
