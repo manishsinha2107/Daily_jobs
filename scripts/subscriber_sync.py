@@ -51,7 +51,7 @@ async def run_subscriber_pnl_sync():
         update_heartbeat("success", "🏁 No active subscribers in ledger.")
         return
 
-    # Fetch latest synced counters from the View to enable Delta Sync
+    # Fetch latest synced counters from the View
     sync_res = supabase.table("latest_strategy_sync").select("*").execute()
     last_counters = {str(row['strategy_id']): int(row['last_synced_counter']) for row in sync_res.data}
 
@@ -71,7 +71,7 @@ async def run_subscriber_pnl_sync():
         page = await context.new_page()
 
         try:
-            # 2. Login to Tradetron (Your working logic preserved)
+            # 2. Login to Tradetron
             log(f"🔑 Logging into Tradetron as {TT_EMAIL}...")
             await page.goto("https://tradetron.tech/deployed-strategies", wait_until="load", timeout=90000)
             
@@ -102,7 +102,11 @@ async def run_subscriber_pnl_sync():
             await page.keyboard.press("Enter")
             await page.locator('select#modalFilterSelect8').select_option("Shared with me")
             await page.locator('.modal-body-submit:has-text("Filter")').click()
-            await asyncio.sleep(5) 
+            
+            # Stabilization Wait: Wait for at least one strategy card to appear in the DOM
+            log("⏳ Waiting for cards to render...")
+            await page.wait_for_selector('.strategy__section.deployed__archived', state="visible", timeout=30000)
+            await asyncio.sleep(3) 
 
             # 4. Process Strategy Cards
             cards = page.locator('.strategy__section.deployed__archived')
@@ -123,12 +127,10 @@ async def run_subscriber_pnl_sync():
                 db_max_counter = last_counters.get(sid, 0)
                 strat_name = await card.locator('.deployed__archived-head a').first.inner_text()
                 
-                # --- NEW CAPITAL SCRAPING LOGIC ---
-                # Scrape Capital (e.g., "₹ 65.00 k" or "₹ 1.30 L")
+                # Scrape Capital
                 cap_element = card.locator('.deployed_archived-info p:has-text("Capital:") span')
                 raw_cap_text = await cap_element.inner_text() if await cap_element.count() > 0 else "0"
                 
-                # Parse value and multiplier
                 clean_cap = re.sub(r'[^\d\.kKLl]', '', raw_cap_text)
                 cap_value = float(re.search(r'[\d\.]+', clean_cap).group()) if re.search(r'[\d\.]+', clean_cap) else 0.0
                 
@@ -138,7 +140,6 @@ async def run_subscriber_pnl_sync():
                     cap_value *= 100000
                 
                 log(f"🎯 Strategy: {strat_name} (SID: {sid}) | Cap: {cap_value} | DB Max: {db_max_counter}")
-                # ----------------------------------
 
                 deployed_info = await card.locator('.deployed__archived-info').inner_text()
                 year_match = re.search(r'20\d{2}', deployed_info)
@@ -177,7 +178,7 @@ async def run_subscriber_pnl_sync():
                         "trade_date": formatted_date,
                         "counter": val_int,
                         "pnl_value": pnl_value,
-                        "capital_at_sync": cap_value, # New Field
+                        "capital_at_sync": cap_value,
                         "user_email": mapping.get('user'),
                         "tt_email_id": mapping.get('tt')
                     }
