@@ -127,19 +127,34 @@ async def run_subscriber_pnl_sync():
                 db_max_counter = last_counters.get(sid, 0)
                 strat_name = await card.locator('.deployed__archived-head a').first.inner_text()
                 
-                # Scrape Capital
-                cap_element = card.locator('.deployed_archived-info p:has-text("Capital:") span')
-                raw_cap_text = await cap_element.inner_text() if await cap_element.count() > 0 else "0"
+                # --- UPDATED CAPITAL SCRAPING LOGIC ---
+                # 1. Target the paragraph specifically containing "Capital:" 
+                # 2. Get the full inner text and then clean it
+                cap_container = card.locator('.deployed_archived-info p:has-text("Capital:")')
                 
-                clean_cap = re.sub(r'[^\d\.kKLl]', '', raw_cap_text)
-                cap_value = float(re.search(r'[\d\.]+', clean_cap).group()) if re.search(r'[\d\.]+', clean_cap) else 0.0
-                
-                if 'k' in clean_cap.lower():
-                    cap_value *= 1000
-                elif 'l' in clean_cap.lower():
-                    cap_value *= 100000
+                if await cap_container.count() > 0:
+                    raw_cap_text = await cap_container.inner_text() 
+                    # raw_cap_text will look like "Capital: ₹ 65.00 k"
+                    
+                    # Remove "Capital:", symbols, and whitespace
+                    clean_cap = raw_cap_text.replace("Capital:", "").strip()
+                    clean_cap = re.sub(r'[^\d\.kKLl]', '', clean_cap)
+                    
+                    # Extract the number
+                    num_match = re.search(r'[\d\.]+', clean_cap)
+                    cap_value = float(num_match.group()) if num_match else 0.0
+                    
+                    # Apply Multipliers
+                    if 'k' in clean_cap.lower():
+                        cap_value *= 1000
+                    elif 'l' in clean_cap.lower():
+                        cap_value *= 100000
+                else:
+                    cap_value = 0.0
+                    log(f"⚠️ Warning: Capital element not found for SID {sid}")
                 
                 log(f"🎯 Strategy: {strat_name} (SID: {sid}) | Cap: {cap_value} | DB Max: {db_max_counter}")
+                # --------------------------------------
 
                 deployed_info = await card.locator('.deployed__archived-info').inner_text()
                 year_match = re.search(r'20\d{2}', deployed_info)
