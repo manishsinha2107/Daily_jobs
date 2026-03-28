@@ -99,14 +99,27 @@ async def run_subscriber_pnl_sync():
 
             for i in range(card_count):
                 card = cards.nth(i)
-                sid_badge = card.locator('a:has-text("SID")')
-                raw_sid_text = await sid_badge.get_attribute("data-tip") # "SID: 28594262"
-                sid = re.search(r'\d+', raw_sid_text).group() if raw_sid_text else None
+                
+                # FIX: Use attribute selector [data-tip^="SID"] to target the unique badge
+                # This avoids the strict mode error by ignoring the text-only 'SID' link
+                sid_badge = card.locator('a[data-tip^="SID"]')
+                
+                if await sid_badge.count() == 0:
+                    log(f"⚠️ Card {i}: Could not find SID badge. Skipping.")
+                    continue
+                
+                # Extract the attribute value (e.g., "SID: 28594262")
+                raw_sid_text = await sid_badge.first.get_attribute("data-tip")
+                sid_match = re.search(r'\d+', raw_sid_text)
+                sid = sid_match.group() if sid_match else None
 
-                if sid not in target_sids:
+                if not sid or sid not in target_sids:
+                    log(f"⏭️ Skipping SID {sid}: Not in ledger or sub_status not Active.")
                     continue
 
-                strat_name = await card.locator('.deployed__archived-head a').first.inner_text()
+                # Get Strategy Name from the first anchor in the head section
+                strat_name_element = card.locator('.deployed__archived-head a').first
+                strat_name = await strat_name_element.inner_text()
                 log(f"🎯 Processing Strategy: {strat_name} (SID: {sid})")
                 
                 # Capture Deployed Year
