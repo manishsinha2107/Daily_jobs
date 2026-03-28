@@ -63,7 +63,7 @@ async def run_subscriber_pnl_sync():
         } for row in ledger_res.data
     }
     target_sids = list(sid_map.keys())
-    log(f"✅ Found {len(target_sids)} active strategies. Delta Sync enabled.")
+    log(f"✅ Found {len(target_sids)} active strategies. Delta Sync + Capital Scraping enabled.")
 
     async with async_playwright() as p:
         browser = await p.chromium.launch(headless=True, args=['--no-sandbox'])
@@ -71,7 +71,7 @@ async def run_subscriber_pnl_sync():
         page = await context.new_page()
 
         try:
-            # 2. Login to Tradetron (ORIGINAL WORKING LOGIC)
+            # 2. Login to Tradetron (Your working logic preserved)
             log(f"🔑 Logging into Tradetron as {TT_EMAIL}...")
             await page.goto("https://tradetron.tech/deployed-strategies", wait_until="load", timeout=90000)
             
@@ -93,7 +93,7 @@ async def run_subscriber_pnl_sync():
                 await invoice_alert.click()
                 log("🚫 Closed invoice alert overlay.")
 
-            # 3. Apply Filters (ORIGINAL WORKING LOGIC)
+            # 3. Apply Filters
             log("⚡ Applying Filters: LIVE AUTO & Shared with me...")
             await page.locator('a[data-target="#deployedFilterModal"]').first.click()
             await page.wait_for_selector('#deployedFilterModal', state="visible")
@@ -112,27 +112,38 @@ async def run_subscriber_pnl_sync():
             for i in range(card_count):
                 card = cards.nth(i)
                 
-                # Use attribute selector to avoid strict mode violation on text "SID"
                 sid_badge = card.locator('a[data-tip^="SID"]')
-                if await sid_badge.count() == 0:
-                    continue
+                if await sid_badge.count() == 0: continue
                 
                 raw_sid_text = await sid_badge.first.get_attribute("data-tip")
-                sid_match = re.search(r'\d+', raw_sid_text)
-                sid = sid_match.group() if sid_match else None
+                sid = re.search(r'\d+', raw_sid_text).group() if re.search(r'\d+', raw_sid_text) else None
 
-                if not sid or sid not in target_sids:
-                    continue
+                if not sid or sid not in target_sids: continue
 
                 db_max_counter = last_counters.get(sid, 0)
                 strat_name = await card.locator('.deployed__archived-head a').first.inner_text()
-                log(f"🎯 Strategy: {strat_name} (SID: {sid}) | DB Max Counter: {db_max_counter}")
                 
+                # --- NEW CAPITAL SCRAPING LOGIC ---
+                # Scrape Capital (e.g., "₹ 65.00 k" or "₹ 1.30 L")
+                cap_element = card.locator('.deployed_archived-info p:has-text("Capital:") span')
+                raw_cap_text = await cap_element.inner_text() if await cap_element.count() > 0 else "0"
+                
+                # Parse value and multiplier
+                clean_cap = re.sub(r'[^\d\.kKLl]', '', raw_cap_text)
+                cap_value = float(re.search(r'[\d\.]+', clean_cap).group()) if re.search(r'[\d\.]+', clean_cap) else 0.0
+                
+                if 'k' in clean_cap.lower():
+                    cap_value *= 1000
+                elif 'l' in clean_cap.lower():
+                    cap_value *= 100000
+                
+                log(f"🎯 Strategy: {strat_name} (SID: {sid}) | Cap: {cap_value} | DB Max: {db_max_counter}")
+                # ----------------------------------
+
                 deployed_info = await card.locator('.deployed__archived-info').inner_text()
                 year_match = re.search(r'20\d{2}', deployed_info)
                 deployed_year = year_match.group() if year_match else str(datetime.now().year)
 
-                # 5. Iterate through Counters
                 counter_select = card.locator(f'select#run_counter_{sid}')
                 options = await counter_select.locator('option').all()
                 
@@ -140,18 +151,14 @@ async def run_subscriber_pnl_sync():
                 for opt in options:
                     val_str = await opt.get_attribute("value")
                     if val_str == "All": continue
-                    
                     val_int = int(val_str)
                     
-                    # DELTA CHECK: Skip counters already in Supabase
-                    if val_int <= db_max_counter:
-                        continue
+                    if val_int <= db_max_counter: continue
                     
                     processed_count += 1
                     txt = await opt.inner_text()
                     pnl_match = re.search(r'\((?:₹\s*)?([\d\s,.-]+)\)', txt)
-                    pnl_raw = pnl_match.group(1).replace(',', '').replace(' ', '') if pnl_match else "0"
-                    pnl_value = float(pnl_raw)
+                    pnl_value = float(pnl_match.group(1).replace(',', '').replace(' ', '')) if pnl_match else 0.0
 
                     await counter_select.select_option(val_str)
                     await asyncio.sleep(2)
@@ -159,12 +166,10 @@ async def run_subscriber_pnl_sync():
                     await card.locator('.deployed__archived-table a[data-target="#notificationLog"]').first.click()
                     await page.wait_for_selector('#notificationLog.show', state="visible")
                     
-                    date_cell = page.locator('#notificationLog td.no_wrap').first
-                    raw_date = await date_cell.inner_text()
+                    raw_date = await page.locator('#notificationLog td.no_wrap').first.inner_text()
                     day, month_str = raw_date.split()
                     formatted_date = f"{deployed_year}-{MONTH_MAP[month_str]}-{day.zfill(2)}"
                     
-                    # 6. Upsert to Supabase with correct Mapping from Ledger
                     mapping = sid_map.get(sid, {})
                     payload = {
                         "strategy_id": int(sid),
@@ -172,6 +177,7 @@ async def run_subscriber_pnl_sync():
                         "trade_date": formatted_date,
                         "counter": val_int,
                         "pnl_value": pnl_value,
+                        "capital_at_sync": cap_value, # New Field
                         "user_email": mapping.get('user'),
                         "tt_email_id": mapping.get('tt')
                     }
