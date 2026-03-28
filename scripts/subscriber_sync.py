@@ -38,11 +38,11 @@ def update_heartbeat(status, msg):
 async def run_subscriber_pnl_sync():
     update_heartbeat("running", "📡 Initializing Subscriber PnL Sync...")
     
-    # 1. Fetch active SIDs and their corresponding subscriber emails
+    # 1. Fetch active SIDs and their corresponding mappings from ledger
     supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
     ledger_res = (
         supabase.table("strategy_ledger")
-        .select("strategy_id, user_email")
+        .select("strategy_id, user_email, tt_email_id")
         .eq("sub_status", "Active")
         .execute()
     )
@@ -51,14 +51,18 @@ async def run_subscriber_pnl_sync():
         update_heartbeat("success", "🏁 No active subscribers in ledger.")
         return
 
-    # NEW: Fetch latest synced counters from the View to enable Delta Sync
-    # This prevents pagination issues by getting only the max counter per SID
+    # Fetch latest synced counters from the View to enable Delta Sync
     sync_res = supabase.table("latest_strategy_sync").select("*").execute()
     last_counters = {str(row['strategy_id']): int(row['last_synced_counter']) for row in sync_res.data}
 
-    # Create a mapping dictionary { 'SID': 'subscriber@email.com' }
-    sid_to_user = {str(row['strategy_id']): row['user_email'] for row in ledger_res.data}
-    target_sids = list(sid_to_user.keys())
+    # Create a nested mapping: { 'SID': {'user': '...', 'tt': '...'} }
+    sid_map = {
+        str(row['strategy_id']): {
+            'user': row['user_email'], 
+            'tt': row['tt_email_id']
+        } for row in ledger_res.data
+    }
+    target_sids = list(sid_map.keys())
     log(f"✅ Found {len(target_sids)} active strategies. Delta Sync enabled.")
 
     async with async_playwright() as p:
@@ -67,7 +71,7 @@ async def run_subscriber_pnl_sync():
         page = await context.new_page()
 
         try:
-            # 2. Login to Tradetron (Your working logic)
+            # 2. Login to Tradetron (ORIGINAL WORKING LOGIC)
             log(f"🔑 Logging into Tradetron as {TT_EMAIL}...")
             await page.goto("https://tradetron.tech/deployed-strategies", wait_until="load", timeout=90000)
             
@@ -89,7 +93,7 @@ async def run_subscriber_pnl_sync():
                 await invoice_alert.click()
                 log("🚫 Closed invoice alert overlay.")
 
-            # 3. Apply Filters
+            # 3. Apply Filters (ORIGINAL WORKING LOGIC)
             log("⚡ Applying Filters: LIVE AUTO & Shared with me...")
             await page.locator('a[data-target="#deployedFilterModal"]').first.click()
             await page.wait_for_selector('#deployedFilterModal', state="visible")
@@ -108,6 +112,7 @@ async def run_subscriber_pnl_sync():
             for i in range(card_count):
                 card = cards.nth(i)
                 
+                # Use attribute selector to avoid strict mode violation on text "SID"
                 sid_badge = card.locator('a[data-tip^="SID"]')
                 if await sid_badge.count() == 0:
                     continue
@@ -159,16 +164,16 @@ async def run_subscriber_pnl_sync():
                     day, month_str = raw_date.split()
                     formatted_date = f"{deployed_year}-{MONTH_MAP[month_str]}-{day.zfill(2)}"
                     
-                    # 6. Upsert to Supabase
-                    subscriber_email = sid_to_user.get(sid)
+                    # 6. Upsert to Supabase with correct Mapping from Ledger
+                    mapping = sid_map.get(sid, {})
                     payload = {
                         "strategy_id": int(sid),
                         "strategy_name": strat_name,
                         "trade_date": formatted_date,
                         "counter": val_int,
                         "pnl_value": pnl_value,
-                        "user_email": subscriber_email,
-                        "tt_email_id": TT_EMAIL
+                        "user_email": mapping.get('user'),
+                        "tt_email_id": mapping.get('tt')
                     }
                     
                     supabase.table("subscriber_daily_pnl").upsert(
