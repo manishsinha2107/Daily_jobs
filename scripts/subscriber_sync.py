@@ -6,14 +6,13 @@ from dotenv import load_dotenv
 from supabase import create_client, Client
 from playwright.async_api import async_playwright
 
-# Load configuration from GitHub Secrets / .env
+# Load configuration
 load_dotenv()
 SUPABASE_URL = os.environ.get("SUPABASE_URL")
 SUPABASE_KEY = os.environ.get("SUPABASE_KEY")
 TT_EMAIL = os.environ.get("TT_USER_EMAIL")
 TT_PASSWORD = os.environ.get("TT_USER_PASSWORD")
 
-# Month mapping for Tradetron date parsing
 MONTH_MAP = {
     'Jan': '01', 'Feb': '02', 'Mar': '03', 'Apr': '04',
     'May': '05', 'Jun': '06', 'Jul': '07', 'Aug': '08',
@@ -36,10 +35,12 @@ def update_heartbeat(status, msg):
         log(f"⚠️ Heartbeat Update Failed: {e}")
 
 async def run_subscriber_pnl_sync():
-    update_heartbeat("running", "📡 Initializing Subscriber PnL Sync...")
+    update_heartbeat("running", "📡 Initializing Delta Sync...")
     
-    # 1. Fetch active SIDs and their corresponding subscriber emails
     supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
+    
+    # 1. Fetch Active Strategies and their Last Synced Counter
+    # We join the ledger with our new View to get the 'Frontier'
     ledger_res = (
         supabase.table("strategy_ledger")
         .select("strategy_id, user_email")
@@ -47,14 +48,19 @@ async def run_subscriber_pnl_sync():
         .execute()
     )
     
+    sync_res = supabase.table("latest_strategy_sync").select("*").execute()
+    
     if not ledger_res.data:
-        update_heartbeat("success", "🏁 No active subscribers in ledger.")
+        update_heartbeat("success", "🏁 No active subscribers found.")
         return
 
-    # Create a mapping dictionary { 'SID': 'subscriber@email.com' }
+    # Mappings
     sid_to_user = {str(row['strategy_id']): row['user_email'] for row in ledger_res.data}
+    # { 'SID': last_counter_int }
+    last_counters = {str(row['strategy_id']): int(row['last_synced_counter']) for row in sync_res.data}
+    
     target_sids = list(sid_to_user.keys())
-    log(f"✅ Found {len(target_sids)} active strategies in ledger.")
+    log(f"✅ Delta Sync: Tracking {len(target_sids)} strategies.")
 
     async with async_playwright() as p:
         browser = await p.chromium.launch(headless=True, args=['--no-sandbox'])
@@ -62,99 +68,84 @@ async def run_subscriber_pnl_sync():
         page = await context.new_page()
 
         try:
-            # 2. Login to Tradetron
-            log(f"🔑 Logging into Tradetron as {TT_EMAIL}...")
+            log(f"🔑 Logging into Tradetron...")
             await page.goto("https://tradetron.tech/deployed-strategies", wait_until="load", timeout=90000)
             
             login_area = page.locator('#main')
             await login_area.locator('input[name="email"]').fill(TT_EMAIL)
             await login_area.locator('input[name="password"]').fill(TT_PASSWORD)
-
-            altcha = login_area.locator('altcha-widget')
-            if await altcha.is_visible():
-                await altcha.locator('.altcha-checkbox').click()
-                await altcha.locator('text=Verified').wait_for(state="visible", timeout=30000)
-
             await login_area.locator('button:has-text("Sign In")').click()
             await page.wait_for_selector('.strategy__filter-btn', timeout=60000)
 
-            # Close Invoice Alert if present
-            invoice_alert = page.locator('.alert__box .alert__close')
-            if await invoice_alert.is_visible():
-                await invoice_alert.click()
-                log("🚫 Closed invoice alert overlay.")
-
-            # 3. Apply Filters
-            log("⚡ Applying Filters: LIVE AUTO & Shared with me...")
+            # Apply Filters
             await page.locator('a[data-target="#deployedFilterModal"]').first.click()
             await page.wait_for_selector('#deployedFilterModal', state="visible")
-
             await page.locator('#react-select-4-input').fill("LIVE AUTO")
             await page.keyboard.press("Enter")
             await page.locator('select#modalFilterSelect8').select_option("Shared with me")
             await page.locator('.modal-body-submit:has-text("Filter")').click()
             await asyncio.sleep(5) 
 
-            # 4. Process Strategy Cards
             cards = page.locator('.strategy__section.deployed__archived')
             card_count = await cards.count()
-            log(f"📋 Visible cards after filtering: {card_count}")
 
             for i in range(card_count):
                 card = cards.nth(i)
-                
-                # Use attribute selector to avoid strict mode violation on text "SID"
                 sid_badge = card.locator('a[data-tip^="SID"]')
-                if await sid_badge.count() == 0:
-                    continue
+                if await sid_badge.count() == 0: continue
                 
                 raw_sid_text = await sid_badge.first.get_attribute("data-tip")
-                sid_match = re.search(r'\d+', raw_sid_text)
-                sid = sid_match.group() if sid_match else None
+                sid = re.search(r'\d+', raw_sid_text).group()
 
-                if not sid or sid not in target_sids:
-                    continue
+                if sid not in target_sids: continue
 
+                # Get current "Max Counter" in DB for this SID (default to 0 if new)
+                db_max_counter = last_counters.get(sid, 0)
                 strat_name = await card.locator('.deployed__archived-head a').first.inner_text()
-                log(f"🎯 Processing Strategy: {strat_name} (SID: {sid})")
                 
+                # Check year for date formatting
                 deployed_info = await card.locator('.deployed__archived-info').inner_text()
                 year_match = re.search(r'20\d{2}', deployed_info)
                 deployed_year = year_match.group() if year_match else str(datetime.now().year)
 
-                # 5. Iterate through Counters
                 counter_select = card.locator(f'select#run_counter_{sid}')
                 options = await counter_select.locator('option').all()
                 
+                new_data_found = False
                 for opt in options:
-                    val = await opt.get_attribute("value")
+                    val_str = await opt.get_attribute("value")
+                    if val_str == "All": continue
+                    
+                    val_int = int(val_str)
+                    
+                    # DELTA LOGIC: Only process if the counter is higher than what we have
+                    if val_int <= db_max_counter:
+                        continue 
+                    
+                    new_data_found = True
                     txt = await opt.inner_text()
-                    if val == "All": continue
-                    
                     pnl_match = re.search(r'\((?:₹\s*)?([\d\s,.-]+)\)', txt)
-                    pnl_raw = pnl_match.group(1).replace(',', '').replace(' ', '') if pnl_match else "0"
-                    pnl_value = float(pnl_raw)
+                    pnl_value = float(pnl_match.group(1).replace(',', '').replace(' ', '')) if pnl_match else 0.0
 
-                    await counter_select.select_option(val)
-                    await asyncio.sleep(2)
+                    await counter_select.select_option(val_str)
+                    await asyncio.sleep(1.5)
                     
+                    # Scrape Date from Modal
                     await card.locator('.deployed__archived-table a[data-target="#notificationLog"]').first.click()
                     await page.wait_for_selector('#notificationLog.show', state="visible")
                     
-                    date_cell = page.locator('#notificationLog td.no_wrap').first
-                    raw_date = await date_cell.inner_text()
+                    raw_date = await page.locator('#notificationLog td.no_wrap').first.inner_text()
                     day, month_str = raw_date.split()
                     formatted_date = f"{deployed_year}-{MONTH_MAP[month_str]}-{day.zfill(2)}"
                     
-                    # 6. Upsert to Supabase with correct Subscriber Email
-                    subscriber_email = sid_to_user.get(sid)
+                    # Upsert to Supabase
                     payload = {
                         "strategy_id": int(sid),
                         "strategy_name": strat_name,
                         "trade_date": formatted_date,
-                        "counter": int(val),
+                        "counter": val_int,
                         "pnl_value": pnl_value,
-                        "user_email": subscriber_email,
+                        "user_email": sid_to_user.get(sid),
                         "tt_email_id": TT_EMAIL
                     }
                     
@@ -164,15 +155,18 @@ async def run_subscriber_pnl_sync():
                     
                     await page.locator('#notificationLog .modal__close').click()
                     await page.wait_for_selector('#notificationLog', state="hidden")
+                    log(f"✅ Synced Counter {val_int} for {sid}")
+
+                if not new_data_found:
+                    log(f"⏭️ SID {sid}: No new counters. Already at {db_max_counter}.")
 
                 supabase.table("strategy_ledger").update({"last_updated_at": "now()"}).eq("strategy_id", sid).execute()
-                log(f"✅ Sync complete for {strat_name}")
 
-            update_heartbeat("success", f"✨ Successfully synced {len(target_sids)} strategies.")
+            update_heartbeat("success", "✨ Delta Sync Finished.")
 
         except Exception as e:
             update_heartbeat("error", f"❌ Error: {str(e)[:100]}")
-            log(f"❌ Critical Error: {e}")
+            log(f"❌ Error: {e}")
         finally:
             await browser.close()
 
