@@ -6,14 +6,13 @@ from dotenv import load_dotenv
 from supabase import create_client, Client
 from playwright.async_api import async_playwright
 
-# Load configuration from GitHub Secrets / .env
+# Load configuration
 load_dotenv()
 SUPABASE_URL = os.environ.get("SUPABASE_URL")
 SUPABASE_KEY = os.environ.get("SUPABASE_KEY")
 TT_EMAIL = os.environ.get("TT_USER_EMAIL")
 TT_PASSWORD = os.environ.get("TT_USER_PASSWORD")
 
-# Month mapping for Tradetron date parsing
 MONTH_MAP = {
     'Jan': '01', 'Feb': '02', 'Mar': '03', 'Apr': '04',
     'May': '05', 'Jun': '06', 'Jul': '07', 'Aug': '08',
@@ -38,7 +37,6 @@ def update_heartbeat(status, msg):
 async def run_subscriber_pnl_sync():
     update_heartbeat("running", "📡 Initializing Subscriber PnL Sync...")
     
-    # 1. Fetch active SIDs and their corresponding mappings from ledger
     supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
     ledger_res = (
         supabase.table("strategy_ledger")
@@ -51,11 +49,9 @@ async def run_subscriber_pnl_sync():
         update_heartbeat("success", "🏁 No active subscribers in ledger.")
         return
 
-    # Fetch latest synced counters from the View
     sync_res = supabase.table("latest_strategy_sync").select("*").execute()
     last_counters = {str(row['strategy_id']): int(row['last_synced_counter']) for row in sync_res.data}
 
-    # Create a nested mapping: { 'SID': {'user': '...', 'tt': '...'} }
     sid_map = {
         str(row['strategy_id']): {
             'user': row['user_email'], 
@@ -63,7 +59,7 @@ async def run_subscriber_pnl_sync():
         } for row in ledger_res.data
     }
     target_sids = list(sid_map.keys())
-    log(f"✅ Found {len(target_sids)} active strategies. Delta Sync + Capital Scraping enabled.")
+    log(f"✅ Found {len(target_sids)} active strategies. Delta Sync enabled.")
 
     async with async_playwright() as p:
         browser = await p.chromium.launch(headless=True, args=['--no-sandbox'])
@@ -71,7 +67,6 @@ async def run_subscriber_pnl_sync():
         page = await context.new_page()
 
         try:
-            # 2. Login to Tradetron
             log(f"🔑 Logging into Tradetron as {TT_EMAIL}...")
             await page.goto("https://tradetron.tech/deployed-strategies", wait_until="load", timeout=90000)
             
@@ -87,74 +82,59 @@ async def run_subscriber_pnl_sync():
             await login_area.locator('button:has-text("Sign In")').click()
             await page.wait_for_selector('.strategy__filter-btn', timeout=60000)
 
-            # Close Invoice Alert if present
+            # Close Invoice Alert
             invoice_alert = page.locator('.alert__box .alert__close')
             if await invoice_alert.is_visible():
                 await invoice_alert.click()
-                log("🚫 Closed invoice alert overlay.")
 
-            # 3. Apply Filters
-            log("⚡ Applying Filters: LIVE AUTO & Shared with me...")
+            # Apply Filters
             await page.locator('a[data-target="#deployedFilterModal"]').first.click()
             await page.wait_for_selector('#deployedFilterModal', state="visible")
-
             await page.locator('#react-select-4-input').fill("LIVE AUTO")
             await page.keyboard.press("Enter")
             await page.locator('select#modalFilterSelect8').select_option("Shared with me")
             await page.locator('.modal-body-submit:has-text("Filter")').click()
             
-            # Stabilization Wait: Wait for at least one strategy card to appear in the DOM
             log("⏳ Waiting for cards to render...")
             await page.wait_for_selector('.strategy__section.deployed__archived', state="visible", timeout=30000)
             await asyncio.sleep(3) 
 
-            # 4. Process Strategy Cards
             cards = page.locator('.strategy__section.deployed__archived')
             card_count = await cards.count()
-            log(f"📋 Visible cards after filtering: {card_count}")
 
             for i in range(card_count):
                 card = cards.nth(i)
-                
                 sid_badge = card.locator('a[data-tip^="SID"]')
                 if await sid_badge.count() == 0: continue
                 
                 raw_sid_text = await sid_badge.first.get_attribute("data-tip")
                 sid = re.search(r'\d+', raw_sid_text).group() if re.search(r'\d+', raw_sid_text) else None
-
                 if not sid or sid not in target_sids: continue
 
                 db_max_counter = last_counters.get(sid, 0)
                 strat_name = await card.locator('.deployed__archived-head a').first.inner_text()
                 
-                # --- UPDATED CAPITAL SCRAPING LOGIC ---
-                # 1. Target the paragraph specifically containing "Capital:" 
-                # 2. Get the full inner text and then clean it
-                cap_container = card.locator('.deployed_archived-info p:has-text("Capital:")')
+                # --- ROBUST CAPITAL EXTRACTION ---
+                # Search for any text containing "Capital:" inside the info section
+                info_section = card.locator('.deployed__archived-info')
+                info_text = await info_section.inner_text()
                 
-                if await cap_container.count() > 0:
-                    raw_cap_text = await cap_container.inner_text() 
-                    # raw_cap_text will look like "Capital: ₹ 65.00 k"
+                cap_value = 0.0
+                # Regex looks for "Capital:" followed by optional symbols, then the number and multiplier (k/L)
+                cap_match = re.search(r'Capital:\s*₹?\s*([\d\.]+)\s*([kKLl]?)', info_text)
+                
+                if cap_match:
+                    base_val = float(cap_match.group(1))
+                    multiplier = cap_match.group(2).lower()
                     
-                    # Remove "Capital:", symbols, and whitespace
-                    clean_cap = raw_cap_text.replace("Capital:", "").strip()
-                    clean_cap = re.sub(r'[^\d\.kKLl]', '', clean_cap)
-                    
-                    # Extract the number
-                    num_match = re.search(r'[\d\.]+', clean_cap)
-                    cap_value = float(num_match.group()) if num_match else 0.0
-                    
-                    # Apply Multipliers
-                    if 'k' in clean_cap.lower():
-                        cap_value *= 1000
-                    elif 'l' in clean_cap.lower():
-                        cap_value *= 100000
-                else:
-                    cap_value = 0.0
-                    log(f"⚠️ Warning: Capital element not found for SID {sid}")
+                    if multiplier == 'k':
+                        cap_value = base_val * 1000
+                    elif multiplier == 'l':
+                        cap_value = base_val * 100000
+                    else:
+                        cap_value = base_val
                 
                 log(f"🎯 Strategy: {strat_name} (SID: {sid}) | Cap: {cap_value} | DB Max: {db_max_counter}")
-                # --------------------------------------
 
                 deployed_info = await card.locator('.deployed__archived-info').inner_text()
                 year_match = re.search(r'20\d{2}', deployed_info)
@@ -168,7 +148,6 @@ async def run_subscriber_pnl_sync():
                     val_str = await opt.get_attribute("value")
                     if val_str == "All": continue
                     val_int = int(val_str)
-                    
                     if val_int <= db_max_counter: continue
                     
                     processed_count += 1
@@ -198,9 +177,7 @@ async def run_subscriber_pnl_sync():
                         "tt_email_id": mapping.get('tt')
                     }
                     
-                    supabase.table("subscriber_daily_pnl").upsert(
-                        payload, on_conflict="strategy_id, trade_date, counter"
-                    ).execute()
+                    supabase.table("subscriber_daily_pnl").upsert(payload, on_conflict="strategy_id, trade_date, counter").execute()
                     
                     await page.locator('#notificationLog .modal__close').click()
                     await page.wait_for_selector('#notificationLog', state="hidden")
