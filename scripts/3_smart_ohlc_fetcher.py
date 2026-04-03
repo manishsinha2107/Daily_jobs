@@ -108,14 +108,13 @@ def fetch_and_cache_ohlc():
         return
 
     for task in tasks:
-        sym = task['broker_symbol']
+        sym = task['broker_symbol'] # This is now natively 'NSE:...'
         t_date = str(task['trade_date'])
-        fyers_sym = f"NSE:{sym}" # Use the bridge for API call
         
         print(f"📥 Fetching {sym} for {t_date}...")
         
         data = {
-            "symbol": fyers_sym,
+            "symbol": sym, # Pass the native string directly to Fyers
             "resolution": "1",
             "date_format": "1",
             "range_from": t_date,
@@ -138,8 +137,8 @@ def fetch_and_cache_ohlc():
                 ohlc_batch.append({
                     "token": str(task['token_id']),
                     "ts": ts_str,
-                    "symbol": sym, # Save in your legacy format
-                    "open": float(c[1]), 
+                    "symbol": sym, # Save native Fyers string to match P&L scripts
+                    "open": float(c[1]),
                     "high": float(c[2]), 
                     "low": float(c[3]), 
                     "close": float(c[4]), 
