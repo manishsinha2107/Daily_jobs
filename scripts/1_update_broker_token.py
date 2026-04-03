@@ -37,8 +37,7 @@ def sync_fyers_tokens():
 
     print(f"📥 Found {len(options_df)} Active Options Contracts.")
 
-    # 3. Prepare payload for Supabase
-    today_str = datetime.now().strftime("%Y-%m-%d")
+    # 3. Prepare payload for Supabase matching the exact schema
     payload = []
     
     for _, row in options_df.iterrows():
@@ -53,16 +52,15 @@ def sync_fyers_tokens():
             "is_historical": False
         })
 
-    # 4. Clear out the old Legacy tokens (Optional but recommended for a clean break)
+    # 4. Clear out the old Legacy tokens 
     print("🧹 Clearing legacy tokens from database...")
     supabase.table("broker_tokens").delete().neq("token_id", "0").execute()
 
-    # 5. Bulk Upsert in batches of 1000
+    # 5. Bulk Upsert in batches of 1000 using token_id as the primary key
     print(f"🚀 Upserting {len(payload)} native Fyers tokens...")
     for i in range(0, len(payload), 1000):
         batch = payload[i:i+1000]
-        # Assuming original_token is the primary/unique key
-        supabase.table("broker_tokens").upsert(batch, on_conflict="original_token").execute()
+        supabase.table("broker_tokens").upsert(batch, on_conflict="token_id").execute()
         print(f"   - Synced batch {i//1000 + 1}...")
 
     print("✅ Broker Token Sync Complete! System is fully aligned with Fyers.")
