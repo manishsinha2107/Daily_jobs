@@ -20,8 +20,8 @@ jobs:
       - name: Install Dependencies
         run: |
           python -m pip install --upgrade pip
-          # Combining all requirements for all 7 scripts
-          pip install pandas numpy supabase google-auth openpyxl requests python-dotenv pyotp pytz websocket-client
+          # Added fyers-apiv3 for the new Step 3 logic
+          pip install pandas numpy supabase google-auth openpyxl requests python-dotenv pyotp pytz websocket-client fyers-apiv3
 
       - name: Run Sequence
         env:
@@ -29,37 +29,31 @@ jobs:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
           GDRIVE_SERVICE_ACCOUNT_JSON: ${{ secrets.GDRIVE_SERVICE_ACCOUNT_JSON }}
-          SHOONYA_USER_ID: ${{ secrets.SHOONYA_USER_ID }}
-          SHOONYA_PASSWORD: ${{ secrets.SHOONYA_PASSWORD }}
-          SHOONYA_TOTP_KEY: ${{ secrets.SHOONYA_TOTP_KEY }}
-          SHOONYA_VC: ${{ secrets.SHOONYA_VC }}
-          SHOONYA_API_KEY: ${{ secrets.SHOONYA_API_KEY }}
-          SHOONYA_IMEI: ${{ secrets.SHOONYA_IMEI }}
+          # New Fyers Authentication Secrets
+          FYERS_APP_ID: ${{ secrets.FYERS_APP_ID }}
+          FYERS_SECRET_ID: ${{ secrets.FYERS_SECRET_ID }}
+          FYERS_USERNAME: ${{ secrets.FYERS_USERNAME }}
+          FYERS_PIN: ${{ secrets.FYERS_PIN }}
+          FYERS_TOTP_KEY: ${{ secrets.FYERS_TOTP_KEY }}
           SOURCE_FOLDER: ${{ secrets.SOURCE_FOLDER }}
           DEST_FOLDER: ${{ secrets.DEST_FOLDER }}
         run: |
           echo "🚀 Step 0: Trade Ingestor"
-          python scripts/0_trade_ingestor.py
+          python -u scripts/0_trade_ingestor.py
 
           echo "🚀 Step 1: Broker Tokens"
-          python scripts/1_update_broker_token.py
+          python -u scripts/1_update_broker_token.py
 
           echo "🚀 Step 2: Trade Verification"
-          python scripts/2_update_strategy_trades_verification.py
+          python -u scripts/2_update_strategy_trades_verification.py
 
-          echo "🚀 Step 3: OHLC Fetcher"
-          python scripts/3_smart_ohlc_fetcher.py
+          echo "🚀 Step 3: OHLC Fetcher (Self-Healing Fyers)"
+          python -u scripts/3_smart_ohlc_fetcher.py
 
           echo "🚀 Step 4: PnL Closing (1-Min)"
-          python scripts/4_pnl_processor_1min_closing.py
+          python -u scripts/4_pnl_processor_1min_closing.py
 
           echo "🚀 Step 5: PnL OHLC (High-Fi)"
-          python scripts/5_pnl_processor_1min_ohlc.py
-
-          # echo "🚀 Step 6: Daily P&L Sync"
-          # python scripts/6_pnl_refresh.py
-
-          # echo "🚀 Step 7: Expectancy Engine"
-          # python scripts/7_expectancy_calc.py
+          python -u scripts/5_pnl_processor_1min_ohlc.py
 
           echo "✅ FULL PIPELINE COMPLETED SUCCESSFULLY!"
