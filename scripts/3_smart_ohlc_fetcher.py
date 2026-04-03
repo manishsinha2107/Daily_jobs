@@ -86,6 +86,22 @@ def get_fyers_access_token():
         print(f"⚠️ Auth Exception: {str(e)}")
         return None
 
+def get_monthly_fyers_tsym(inst_name):
+    """Fallback Translator: Explicitly forces the Fyers Monthly Format"""
+    try:
+        if not inst_name:
+            return None
+        parts = inst_name.split('_')
+        if parts[0] == 'OPTIDX':
+            symbol, expiry_str, opt_type_full, strike = parts[1], parts[2], parts[3], parts[4]
+            mmm = expiry_str[2:5].upper()
+            yy = expiry_str[-2:]
+            fyers_opt = 'CE' if 'C' in opt_type_full else 'PE'
+            return f"NSE:{symbol}{yy}{mmm}{strike}{fyers_opt}"
+        return inst_name
+    except Exception as e:
+        return None
+
 def run_smart_fetcher():
     print("🚀 Starting Smart OHLC Fetcher (Date-Symbol-Strategy Grouping)...")
     report_progress("running", "📡 Reading pending OHLC tasks...")
@@ -97,8 +113,9 @@ def run_smart_fetcher():
     offset = 0
     print("📡 Reading snapshot of trades requiring fresh OHLC verification...")
     while True:
+        # NOTE: Added 'instrument' to the select query to enable the fallback logic
         res = supabase.table("strategy_trades_verification") \
-            .select("id, token_id, trade_date, broker_symbol, ohlc_status, strategy_id, strategy_name") \
+            .select("id, token_id, trade_date, instrument, broker_symbol, ohlc_status, strategy_id, strategy_name") \
             .eq("ohlc_status", "pending_api_search") \
             .eq("pnl_status", "pending") \
             .range(offset, offset + 999).execute()
@@ -113,10 +130,10 @@ def run_smart_fetcher():
         report_progress("success", "✅ No pending tasks found.")
         return
 
-    # --- ENHANCED LOGIC: GROUP BY DATE + SYMBOL + STRATEGY_ID ---
+    # --- ENHANCED LOGIC: GROUP BY DATE + SYMBOL + INSTRUMENT + STRATEGY_ID ---
     task_groups = defaultdict(list)
     for task in pending_tasks:
-        key = (task['trade_date'], task['broker_symbol'], task['strategy_id'])
+        key = (task['trade_date'], task['broker_symbol'], task['instrument'], task['strategy_id'])
         task_groups[key].append(task)
 
     print(f"📦 Found {len(pending_tasks)} trade rows across {len(task_groups)} unique Date-Symbol-Strategy groups.")
@@ -127,7 +144,7 @@ def run_smart_fetcher():
     group_idx = 0
     total_groups = len(task_groups)
 
-    for (t_date, b_sym, s_id), rows in task_groups.items():
+    for (t_date, b_sym, t_inst, s_id), rows in task_groups.items():
         group_idx += 1
         s_name = rows[0].get('strategy_name', 'Unknown')
         valid_token = next((r['token_id'] for r in rows if r['token_id']), None)
@@ -160,13 +177,13 @@ def run_smart_fetcher():
                     return
                 fyers_api = fyersModel.FyersModel(client_id=APP_ID, token=access_token, is_async=False, log_path="")
 
-            # Local Token Resolution Logic (Fallback if missing in verification table)
+            # Local Token Resolution Logic
             if not valid_token:
                 token_lookup = supabase.table("broker_tokens").select("token_id").eq("tsym", b_sym).execute()
                 if token_lookup.data:
                     valid_token = token_lookup.data[0]['token_id']
                 else:
-                    valid_token = 0 # Default fallback to satisfy DB constraints
+                    valid_token = 0 
 
             # Fyers History Call
             data = {
@@ -179,6 +196,21 @@ def run_smart_fetcher():
             }
             response = fyers_api.history(data=data)
 
+            # --- THE FALLBACK LOGIC ---
+            if response.get("s") == "error" and "invalid symbol" in response.get("message", "").lower():
+                monthly_sym = get_monthly_fyers_tsym(t_inst)
+                if monthly_sym and monthly_sym != b_sym:
+                    print(f"   🔄 [RETRY] Fyers rejected Weekly format. Retrying as Monthly: {monthly_sym}...")
+                    data["symbol"] = monthly_sym
+                    response = fyers_api.history(data=data)
+                    
+                    if response.get("s") == "ok":
+                        # If the fallback succeeds, update b_sym so it caches correctly
+                        b_sym = monthly_sym
+                        # Also update the Verification table so downstream P&L scripts use the fixed string
+                        supabase.table("strategy_trades_verification").update({"broker_symbol": monthly_sym}).in_("id", ids_to_update).execute()
+
+            # --- PROCESS RESPONSE ---
             if response.get("s") == "ok":
                 candles = response.get("candles", [])
                 if candles:
@@ -193,7 +225,7 @@ def run_smart_fetcher():
                         ohlc_batch.append({
                             "token": str(valid_token),
                             "ts": readable_ist_ts,
-                            "symbol": b_sym,
+                            "symbol": b_sym, # Will be the corrected Monthly string if Fallback triggered
                             "open": float(c[1]),
                             "high": float(c[2]),
                             "low": float(c[3]),
