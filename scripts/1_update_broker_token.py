@@ -1,103 +1,105 @@
 import os
 import sys
 import subprocess
-
-# --- 1. THE "BOOTSTRAP" BLOCK (Self-Sufficient Environment) ---
-def bootstrap():
-    """Checks and installs dependencies before the rest of the script runs."""
-    required = ["pandas", "requests", "supabase", "python-dotenv"]
-    try:
-        import supabase
-        import dotenv
-    except ImportError:
-        print("📦 Missing libraries detected. Bootstrapping environment...")
-        subprocess.check_call([sys.executable, "-m", "pip", "install", *required])
-
-# Execute the bootstrap immediately
-bootstrap()
-
-# --- 2. NOW IT IS SAFE TO IMPORT EVERYTHING ELSE ---
 import pandas as pd
 import requests
-import zipfile
 import io
 from datetime import datetime
 from dotenv import load_dotenv
 from supabase import create_client, Client
 
-# Load .env (Local PyCharm) or use OS Environment (GitHub)
-load_dotenv()
+# --- 1. THE "BOOTSTRAP" BLOCK ---
+def bootstrap():
+    """Ensures environment is ready for Fyers and Supabase."""
+    required = ["pandas", "requests", "supabase", "python-dotenv"]
+    try:
+        import supabase
+        import dotenv
+    except ImportError:
+        print("📦 Installing dependencies for Fyers migration...")
+        subprocess.check_call([sys.executable, "-m", "pip", "install", *required])
 
+bootstrap()
+
+# --- 2. INITIALIZATION ---
+load_dotenv()
 url: str = os.getenv("SUPABASE_URL")
 key: str = os.getenv("SUPABASE_KEY")
-
-if not url or not key:
-    print("❌ Error: SUPABASE_URL or SUPABASE_KEY not found in environment.")
-    sys.exit(1)
-  
 supabase: Client = create_client(url, key)
 
-# --- HEARTBEAT REPORTER ---
 def report_progress(status, msg):
-    """Updates the real-time heartbeat in Supabase for Step 1"""
+    """Updates Step 1 heartbeat."""
     try:
         supabase.table("engine_heartbeat").update({
-            "status": status,
-            "last_msg": msg,
-            "updated_at": datetime.now().isoformat() # Better for Supabase than "now()" string
+            "status": status, "last_msg": msg, "updated_at": datetime.now().isoformat()
         }).eq("step_id", "step1").execute()
     except Exception as e:
-        print(f"⚠️ Heartbeat update failed: {e}")
+        print(f"⚠️ Heartbeat failed: {e}")
 
-# --- CONFIGURATION ---
+# --- 3. CONFIGURATION ---
 ALLOWED_INDICES = ['NIFTY', 'BANKNIFTY', 'FINNIFTY', 'MIDCPNIFTY', 'SENSEX', 'BANKEX']
-TOKEN_URL = "https://api.shoonya.com/NFO_symbols.txt.zip"
+# Fyers Master File URLs (2026 V3)
+SYMBOL_URLS = {
+    "NSE_FO": "https://public.fyers.in/sym_details/NSE_FO.csv",
+    "NSE_CM": "https://public.fyers.in/sym_details/NSE_CM.csv"
+}
 
-def sync_index_tokens_to_vault():
-    print("🌐 Downloading latest tokens from Shoonya...")
-    report_progress("running", "🌐 Downloading Shoonya Master...")
+# The Header format for Fyers V3 Symbol Master
+FYERS_HEADER = [
+    'fytoken', 'name', 'instrument_type', 'lot', 'tick', 'isin', 'trad_ses', 
+    'last_upd', 'expiry_dt', 'symbol', 'exchange', 'segment', 'script_code', 
+    'short_sym', 'strike', 'opt', 'fytoken_dup'
+]
+
+def sync_fyers_tokens():
+    print("🌐 Fetching Symbol Masters from Fyers...")
+    report_progress("running", "🌐 Downloading Fyers Masters...")
     
-    try:
-        response = requests.get(TOKEN_URL, timeout=30)
-        with zipfile.ZipFile(io.BytesIO(response.content)) as z:
-            with z.open(z.namelist()[0]) as f:
-                df = pd.read_csv(f)
-    except Exception as e:
-        print(f"❌ Error fetching broker tokens: {e}")
-        report_progress("error", f"❌ Download Failed: {str(e)[:40]}")
-        return
+    all_filtered_rows = []
 
-    print(f"🔍 Filtering for indices: {ALLOWED_INDICES}...")
-    df_filtered = df[df['Symbol'].isin(ALLOWED_INDICES)].copy()
+    for key_name, csv_url in SYMBOL_URLS.items():
+        try:
+            response = requests.get(csv_url, timeout=30)
+            df = pd.read_csv(io.StringIO(response.text), names=FYERS_HEADER, header=None)
+            
+            # Filter for our target indices
+            # Fyers 'short_sym' usually contains the base index name
+            mask = df['short_sym'].isin(ALLOWED_INDICES)
+            df_filtered = df[mask].copy()
+            
+            for _, row in df_filtered.iterrows():
+                # TRANSLATION BRIDGE: 
+                # Fyers symbol: 'NSE:NIFTY26APR25500CE' 
+                # Your tsym: 'NIFTY26APR25500CE' (Stripping the Exchange prefix)
+                raw_fyers_sym = str(row['symbol'])
+                internal_tsym = raw_fyers_sym.split(':')[-1] if ':' in raw_fyers_sym else raw_fyers_sym
 
-    print(f"✅ Found {len(df_filtered)} new/active index tokens.")
-    report_progress("running", f"🔍 Processing {len(df_filtered)} index tokens...")
+                all_filtered_rows.append({
+                    "token_id": str(row['fytoken']),
+                    "tsym": internal_tsym,
+                    "symbol": str(row['short_sym']),
+                    "expiry": str(pd.to_datetime(row['expiry_dt'], unit='s').date()) if pd.notnull(row['expiry_dt']) else None,
+                    "strike": float(row['strike']) if row['strike'] != -1 else None,
+                    "option_type": str(row['opt']) if str(row['opt']) != 'XX' else None,
+                    "last_validated": datetime.now().isoformat()
+                })
+            print(f"✅ Processed {key_name}: Found {len(df_filtered)} relevant rows.")
+            
+        except Exception as e:
+            print(f"❌ Error processing {key_name}: {e}")
+            continue
 
-    token_payload = []
-    for i, row in df_filtered.iterrows():
-        token_payload.append({
-            "token_id": str(row['Token']),
-            "tsym": str(row['TradingSymbol']),
-            "symbol": str(row.get('Symbol', '')),
-            "expiry": str(pd.to_datetime(row.get('Expiry')).date()) if row.get('Expiry') else None,
-            "strike": float(row.get('Strike', 0)) if row.get('Strike') else None,
-            "option_type": str(row.get('OptionType', ''))
-        })
-
-        if len(token_payload) >= 1000:
-            supabase.table("broker_tokens").upsert(token_payload).execute()
-            token_payload = []
-            print(f"🚀 Upserted batch at row {i}...")
-
-    if token_payload:
-        supabase.table("broker_tokens").upsert(token_payload).execute()
-
-    print(f"🏁 DONE! The broker_tokens table is updated.")
-    report_progress("success", f"✅ {len(df_filtered)} tokens synced.")
+    if all_filtered_rows:
+        report_progress("running", f"🚀 Upserting {len(all_filtered_rows)} tokens...")
+        # Batch upsert to Supabase
+        for i in range(0, len(all_filtered_rows), 1000):
+            batch = all_filtered_rows[i:i+1000]
+            supabase.table("broker_tokens").upsert(batch).execute()
+        
+        report_progress("success", f"✅ {len(all_filtered_rows)} Fyers tokens synced.")
+        print(f"🏁 DONE! Sync complete.")
+    else:
+        report_progress("error", "❌ No tokens found in master.")
 
 if __name__ == "__main__":
-    try:
-        sync_index_tokens_to_vault()
-    except Exception as e:
-        report_progress("error", f"❌ Fatal Error: {str(e)[:50]}")
-        sys.exit(1)
+    sync_fyers_tokens()
