@@ -25,7 +25,7 @@ TOTP_KEY = os.getenv("FYERS_TOTP_KEY")
 REDIRECT_URL = "https://trade.fyers.in/api-login/redirect-uri/index.html"
 
 def get_fyers_access_token():
-    """Headless Authentication Flow (2026 V3 Confirmed)"""
+    """Headless Authentication Flow (2026 Final Handshake Fix)"""
     print("🔐 Starting Secure Fyers Auth...")
     s = requests.Session()
     headers = {'Accept': 'application/json', 'Content-Type': 'application/json'}
@@ -54,30 +54,30 @@ def get_fyers_access_token():
         }
         r4 = s.post("https://api-t1.fyers.in/api/v3/token", json=payload4, headers=headers_auth).json()
         
-        # 2026 Logic: The code is in the 'auth' key inside 'data'
         if r4.get('s') == 'ok' and 'data' in r4:
             auth_code = r4['data']['auth']
-            print("✅ Auth Code received successfully.")
+            print("✅ Auth Code received. Exchanging for Access Token...")
         else:
-            print(f"🛑 Step 4 Failed. Response: {r4}")
+            print(f"🛑 Step 4 Failed: {r4}")
             return None
 
-        # Step 5: Final Token Generation
-        session = fyersModel.SessionModel(
-            client_id=APP_ID, 
-            secret_key=SECRET_ID, 
-            redirect_uri=REDIRECT_URL, 
-            response_type="code", 
-            grant_type="authorization_code"
-        )
-        session.set_token(auth_code)
-        response = session.generate_token()
+        # Step 5: Final Token Generation (Direct API call with SHA256 Hash)
+        # The 'appIdHash' is the SHA256 of 'APP_ID:SECRET_ID'
+        app_id_hash = hashlib.sha256(f"{APP_ID}:{SECRET_ID}".encode()).hexdigest()
         
-        if "access_token" in response:
-            print("🚀 Access Token generated!")
-            return response["access_token"]
+        payload5 = {
+            "grant_type": "authorization_code",
+            "appIdHash": app_id_hash,
+            "code": auth_code
+        }
+        
+        r5 = requests.post("https://api-t1.fyers.in/api/v3/validate-authcode", json=payload5, headers=headers).json()
+        
+        if r5.get('s') == 'ok' and 'access_token' in r5:
+            print("🚀 Access Token generated successfully!")
+            return r5["access_token"]
         else:
-            print(f"🛑 Final Token Exchange Failed: {response}")
+            print(f"🛑 Final Token Exchange Failed: {r5}")
             return None
 
     except Exception as e:
