@@ -65,6 +65,8 @@ def get_fyers_tsym(inst_name):
     e.g., OPTIDX_NIFTY_28OCT2025_PE_24400 -> NSE:NIFTY25O2824400PE
     """
     try:
+        if not inst_name:
+            return None
         parts = inst_name.split('_')
         if parts[0] == 'OPTIDX':
             symbol, expiry_str, opt_type_full, strike = parts[1], parts[2], parts[3], parts[4]
@@ -247,7 +249,6 @@ if __name__ == "__main__":
         sync_audit_to_shadow()
     except Exception as e:
         import traceback
-        print("\n❌ CRASH DETECTED! Here is the full trace:")
         traceback.print_exc()
         report_progress("error", f"❌ Error: {str(e)[:50]}")
-        sys.exit(1)
+        exit(1)
