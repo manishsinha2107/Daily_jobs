@@ -1,4 +1,4 @@
-name: 📈 Step 3 - Smart OHLC Fetcher
+name: 📈 Step 3 - Smart OHLC Fetcher (Fyers)
 
 on:
   workflow_dispatch:
@@ -14,21 +14,20 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: '3.10'
+          cache: 'pip'
 
       - name: Install Dependencies
         run: |
           python -m pip install --upgrade pip
-          # Added pyotp, pytz, and websocket-client (needed by NorenApi)
-          pip install pandas supabase python-dotenv pyotp pytz websocket-client
+          pip install -r requirements.txt
 
       - name: Run OHLC Fetcher
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
-          SHOONYA_USER_ID: ${{ secrets.SHOONYA_USER_ID }}
-          SHOONYA_PASSWORD: ${{ secrets.SHOONYA_PASSWORD }}
-          SHOONYA_TOTP_KEY: ${{ secrets.SHOONYA_TOTP_KEY }}
-          SHOONYA_VC: ${{ secrets.SHOONYA_VC }}
-          SHOONYA_API_KEY: ${{ secrets.SHOONYA_API_KEY }}
-          SHOONYA_IMEI: ${{ secrets.SHOONYA_IMEI }}
+          FYERS_APP_ID: ${{ secrets.FYERS_APP_ID }}
+          FYERS_SECRET_ID: ${{ secrets.FYERS_SECRET_ID }}
+          FYERS_USERNAME: ${{ secrets.FYERS_USERNAME }}
+          FYERS_PIN: ${{ secrets.FYERS_PIN }}
+          FYERS_TOTP_KEY: ${{ secrets.FYERS_TOTP_KEY }}
         run: python scripts/3_smart_ohlc_fetcher.py
