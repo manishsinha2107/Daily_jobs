@@ -246,5 +246,8 @@ if __name__ == "__main__":
     try:
         sync_audit_to_shadow()
     except Exception as e:
+        import traceback
+        print("\n❌ CRASH DETECTED! Here is the full trace:")
+        traceback.print_exc()
         report_progress("error", f"❌ Error: {str(e)[:50]}")
-        exit(1)
+        sys.exit(1)
