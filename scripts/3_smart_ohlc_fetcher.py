@@ -25,7 +25,7 @@ TOTP_KEY = os.getenv("FYERS_TOTP_KEY")
 REDIRECT_URL = "https://trade.fyers.in/api-login/redirect-uri/index.html"
 
 def get_fyers_access_token():
-    """Headless Authentication Flow (2026 Final Handshake Fix)"""
+    """Headless Authentication Flow (2026 SDK Fixed)"""
     print("🔐 Starting Secure Fyers Auth...")
     s = requests.Session()
     headers = {'Accept': 'application/json', 'Content-Type': 'application/json'}
@@ -47,30 +47,22 @@ def get_fyers_access_token():
         token_v2 = r3['data']['access_token']
 
         # Step 4: Authorization Code Exchange
-        # IMPORTANT: app_id here is usually the first part (before the hyphen)
         short_app_id = APP_ID.split('-')[0]
         headers_auth = {'Authorization': f'Bearer {token_v2}', 'Content-Type': 'application/json'}
         payload4 = {
-            "fyers_id": FY_ID, 
-            "app_id": short_app_id, 
-            "redirect_uri": REDIRECT_URL, 
-            "appType": "100", 
-            "response_type": "code", 
-            "state": "abcdefg"
+            "fyers_id": FY_ID, "app_id": short_app_id, "redirect_uri": REDIRECT_URL, 
+            "appType": "100", "response_type": "code", "state": "abcdefg"
         }
         r4 = s.post("https://api-t1.fyers.in/api/v3/token", json=payload4, headers=headers_auth).json()
         
         if r4.get('s') == 'ok' and 'data' in r4:
             auth_code = r4['data']['auth']
-            print("✅ Auth Code received. Validating...")
+            print("✅ Auth Code received. Exchanging for Access Token...")
         else:
             print(f"🛑 Step 4 Failed: {r4}")
             return None
 
-        # Step 5: Final Token Generation (SDK method with explicit appIdHash)
-        # Fyers requires the full APP_ID:SECRET_ID hash
-        app_id_hash = hashlib.sha256(f"{APP_ID}:{SECRET_ID}".encode()).hexdigest()
-        
+        # Step 5: Final Token Generation (SDK Corrected Syntax)
         session = fyersModel.SessionModel(
             client_id=APP_ID, 
             secret_key=SECRET_ID, 
@@ -79,12 +71,9 @@ def get_fyers_access_token():
             grant_type="authorization_code"
         )
         
-        # We manually call the validate endpoint via the SDK session
-        response = session.generate_token({
-            "grant_type": "authorization_code",
-            "appIdHash": app_id_hash,
-            "code": auth_code
-        })
+        # The SDK expects you to SET the token first, then call generate without arguments
+        session.set_token(auth_code)
+        response = session.generate_token()
         
         if response.get("s") == "ok" and "access_token" in response:
             print("🚀 Access Token generated successfully!")
