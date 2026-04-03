@@ -17,7 +17,7 @@ if not url or not key:
 supabase: Client = create_client(url, key)
 
 def sync_fyers_tokens():
-    print("🔄 Syncing Native Fyers Tokens...")
+    print("🔄 Syncing Native Fyers Tokens (Daily Update)...")
     
     # 1. Download Fyers NSE F&O Master CSV
     csv_url = "https://public.fyers.in/sym_details/NSE_FO.csv"
@@ -28,7 +28,6 @@ def sync_fyers_tokens():
         return
 
     # 2. Filter for Options (Index 14 represents Options in Fyers schema)
-    # We will grab NIFTY, BANKNIFTY, FINNIFTY, MIDCPNIFTY
     target_indices = ['NIFTY', 'BANKNIFTY', 'FINNIFTY', 'MIDCPNIFTY']
     options_df = df[
         (df[13].isin(target_indices)) & 
@@ -52,18 +51,14 @@ def sync_fyers_tokens():
             "is_historical": False
         })
 
-    # 4. Clear out the old Legacy tokens 
-    print("🧹 Clearing legacy tokens from database...")
-    supabase.table("broker_tokens").delete().neq("token_id", "0").execute()
-
-    # 5. Bulk Upsert in batches of 1000 using token_id as the primary key
+    # 4. Bulk Upsert in batches of 1000 using token_id as the primary key
     print(f"🚀 Upserting {len(payload)} native Fyers tokens...")
     for i in range(0, len(payload), 1000):
         batch = payload[i:i+1000]
         supabase.table("broker_tokens").upsert(batch, on_conflict="token_id").execute()
         print(f"   - Synced batch {i//1000 + 1}...")
 
-    print("✅ Broker Token Sync Complete! System is fully aligned with Fyers.")
+    print("✅ Daily Broker Token Sync Complete!")
 
 if __name__ == "__main__":
     sync_fyers_tokens()
