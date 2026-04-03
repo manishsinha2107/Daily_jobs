@@ -1,70 +1,69 @@
 import os
 import sys
 import pandas as pd
-import requests
-import io
 from datetime import datetime
 from dotenv import load_dotenv
 from supabase import create_client, Client
 
+# --- INITIALIZATION ---
 load_dotenv()
 url = os.getenv("SUPABASE_URL")
 key = os.getenv("SUPABASE_KEY")
+
+if not url or not key:
+    print("❌ Error: Supabase credentials missing.")
+    sys.exit(1)
+
 supabase: Client = create_client(url, key)
 
-TARGET_KEYWORDS = ['NIFTY', 'BANKNIFTY', 'FINNIFTY', 'MIDCPNIFTY', 'SENSEX', 'BANKEX']
-SYMBOL_URLS = {"NSE_FO": "https://public.fyers.in/sym_details/NSE_FO.csv"}
-
-def format_to_legacy(row):
-    try:
-        base = str(row[13]).strip() 
-        dt = pd.to_datetime(int(row[8]), unit='s')
-        
-        # --- THE FIX: SWAP DAY AND YEAR ---
-        year = dt.strftime('%y')          # 26
-        month = dt.strftime('%b').upper() # APR
-        day = dt.strftime('%d')           # 07
-        # ----------------------------------
-        
-        strike = str(int(float(row[15])))
-        opt = 'C' if str(row[16]) == 'CE' else 'P' if str(row[16]) == 'PE' else None
-        
-        if not opt: return None 
-        
-        # Result: NIFTY + 26 + APR + 07 + C + 19600 
-        # (Matches NIFTY + 26 + JUN + 29 + P)
-        return f"{base}{year}{month}{day}{opt}{strike}"
-    except:
-        return None
-
 def sync_fyers_tokens():
-    print("🔄 Re-Syncing with Legacy Format Bridge...")
-    response = requests.get(SYMBOL_URLS["NSE_FO"], timeout=30)
-    df = pd.read_csv(io.StringIO(response.text), header=None)
+    print("🔄 Syncing Native Fyers Tokens...")
     
-    # Filter for target indices
-    mask = df.stack().str.contains('|'.join(TARGET_KEYWORDS), na=False).unstack().any(axis=1)
-    df_filtered = df[mask].copy()
+    # 1. Download Fyers NSE F&O Master CSV
+    csv_url = "https://public.fyers.in/sym_details/NSE_FO.csv"
+    try:
+        df = pd.read_csv(csv_url, header=None)
+    except Exception as e:
+        print(f"❌ Failed to download Fyers CSV: {e}")
+        return
 
-    all_filtered_rows = []
-    for _, row in df_filtered.iterrows():
-        legacy_tsym = format_to_legacy(row)
-        if not legacy_tsym: continue
+    # 2. Filter for Options (Index 14 represents Options in Fyers schema)
+    # We will grab NIFTY, BANKNIFTY, FINNIFTY, MIDCPNIFTY
+    target_indices = ['NIFTY', 'BANKNIFTY', 'FINNIFTY', 'MIDCPNIFTY']
+    options_df = df[
+        (df[13].isin(target_indices)) & 
+        (df[9].str.endswith('CE') | df[9].str.endswith('PE'))
+    ]
 
-        all_filtered_rows.append({
-            "token_id": str(row[0]),       # Fyers fyToken
-            "tsym": legacy_tsym,           # YOUR FORMAT (e.g. NIFTY26APR07P18550)
-            "symbol": str(row[13]),        # NIFTY
-            "expiry": str(pd.to_datetime(int(row[8]), unit='s').date()),
-            "strike": float(row[15]),
-            "option_type": str(row[16])
+    print(f"📥 Found {len(options_df)} Active Options Contracts.")
+
+    # 3. Prepare payload for Supabase
+    today_str = datetime.now().strftime("%Y-%m-%d")
+    payload = []
+    
+    for _, row in options_df.iterrows():
+        # row[0] = fyToken (e.g., 101126040740530)
+        # row[9] = SymbolTicker (e.g., NSE:NIFTY2640719600CE)
+        payload.append({
+            "original_token": str(row[0]),
+            "tsym": str(row[9]),
+            "source": "MODERN (Fyers)",
+            "sync_date": today_str
         })
 
-    if all_filtered_rows:
-        print(f"🚀 Upserting {len(all_filtered_rows)} standardized tokens...")
-        for i in range(0, len(all_filtered_rows), 1000):
-            supabase.table("broker_tokens").upsert(all_filtered_rows[i:i+1000]).execute()
-        print("✅ Done! Symbols now match your historical data.")
+    # 4. Clear out the old Legacy tokens (Optional but recommended for a clean break)
+    print("🧹 Clearing legacy tokens from database...")
+    supabase.table("broker_tokens").delete().neq("source", "keep_dummy").execute()
+
+    # 5. Bulk Upsert in batches of 1000
+    print(f"🚀 Upserting {len(payload)} native Fyers tokens...")
+    for i in range(0, len(payload), 1000):
+        batch = payload[i:i+1000]
+        # Assuming original_token is the primary/unique key
+        supabase.table("broker_tokens").upsert(batch, on_conflict="original_token").execute()
+        print(f"   - Synced batch {i//1000 + 1}...")
+
+    print("✅ Broker Token Sync Complete! System is fully aligned with Fyers.")
 
 if __name__ == "__main__":
     sync_fyers_tokens()
