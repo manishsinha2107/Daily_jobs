@@ -30,4 +30,4 @@ jobs:
           FYERS_USERNAME: ${{ secrets.FYERS_USERNAME }}
           FYERS_PIN: ${{ secrets.FYERS_PIN }}
           FYERS_TOTP_KEY: ${{ secrets.FYERS_TOTP_KEY }}
-        run: python scripts/3_smart_ohlc_fetcher.py
+        run: python -u scripts/3_smart_ohlc_fetcher.py
