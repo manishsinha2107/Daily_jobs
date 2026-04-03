@@ -53,42 +53,32 @@ def report_progress(status, msg):
 # Shoonya OHLC window is ~90 days
 DYNAMIC_CUTOFF = (datetime.now() - timedelta(days=88)).strftime('%Y-%m-%d')
 
-def is_monthly_expiry(expiry_date_obj):
-    """
-    Checks if the given date is the last Thursday of its month.
-    Shoonya Monthly symbols usually skip the 'Day' part (e.g., NIFTYOCT25P...)
-    """
-    year = expiry_date_obj.year
-    month = expiry_date_obj.month
-    # Find all Thursdays in the month
-    month_calendar = calendar.monthcalendar(year, month)
-    thursdays = [week[calendar.THURSDAY] for week in month_calendar if week[calendar.THURSDAY] != 0]
-    return expiry_date_obj.day == thursdays[-1]
+FYERS_MONTH_MAP = {
+    'JAN': '1', 'FEB': '2', 'MAR': '3', 'APR': '4',
+    'MAY': '5', 'JUN': '6', 'JUL': '7', 'AUG': '8',
+    'SEP': '9', 'OCT': 'O', 'NOV': 'N', 'DEC': 'D'
+}
 
-def get_shoonya_tsym(inst_name):
+def get_fyers_tsym(inst_name):
     """
-    Enhanced Translator: Handles Monthly vs Weekly Shoonya naming.
-    OPTIDX_NIFTY_28OCT2025_PE_24400 -> NIFTYOCT25P24400 (If Monthly)
-    OPTIDX_NIFTY_16OCT2025_PE_24400 -> NIFTY16OCT25P24400 (If Weekly)
+    Translator: Tradetron Format -> Fyers Native Format
+    e.g., OPTIDX_NIFTY_28OCT2025_PE_24400 -> NSE:NIFTY25O2824400PE
     """
     try:
         parts = inst_name.split('_')
         if parts[0] == 'OPTIDX':
             symbol, expiry_str, opt_type_full, strike = parts[1], parts[2], parts[3], parts[4]
-            opt_type = opt_type_full[0] # P or C
-
+            
             # Parse expiry string '28OCT2025'
-            exp_dt = datetime.strptime(expiry_str, '%d%b%Y')
-            day = expiry_str[:2]
-            month_abbr = expiry_str[2:5].upper()
-            year_short = expiry_str[-2:]
-
-            if is_monthly_expiry(exp_dt):
-                # Monthly Format: Symbol + Month + Year + Type + Strike
-                return f"{symbol}{month_abbr}{year_short}{opt_type}{strike}"
-            else:
-                # Weekly Format: Symbol + Day + Month + Year + Type + Strike
-                return f"{symbol}{day}{month_abbr}{year_short}{opt_type}{strike}"
+            dd = expiry_str[:2]
+            mmm = expiry_str[2:5].upper()
+            yy = expiry_str[-2:]
+            
+            fyers_month = FYERS_MONTH_MAP.get(mmm, '')
+            # Tradetron uses 'CE'/'PE', Fyers uses 'CE'/'PE'
+            fyers_opt = 'CE' if 'C' in opt_type_full else 'PE'
+            
+            return f"NSE:{symbol}{yy}{fyers_month}{dd}{strike}{fyers_opt}"
 
         return inst_name
     except Exception as e:
@@ -173,7 +163,7 @@ def sync_audit_to_shadow():
 
     for row in new_audit_rows:
         row_id = row['id']
-        b_symbol = get_shoonya_tsym(row['instrument'])
+        b_symbol = get_fyers_tsym(row['instrument'])
         trade_date = row['trade_date']
         strat_name = row.get('strategy_name', 'Unknown')
 
