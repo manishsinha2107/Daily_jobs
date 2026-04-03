@@ -25,13 +25,13 @@ TOTP_KEY = os.getenv("FYERS_TOTP_KEY")
 REDIRECT_URL = "https://trade.fyers.in/api-login/redirect-uri/index.html"
 
 def get_fyers_access_token():
-    """Headless Authentication Flow (2026 SDK Native Handshake)"""
+    """Headless Authentication Flow (2026 Native SDK)"""
     print("🔐 Starting Secure Fyers Auth...")
     s = requests.Session()
     headers = {'Accept': 'application/json', 'Content-Type': 'application/json'}
     
     try:
-        # Step 1: Client ID (Base64)
+        # Step 1: Client ID
         payload1 = {"fy_id": base64.b64encode(FY_ID.encode()).decode(), "app_id": "2"}
         r1 = s.post("https://api-t2.fyers.in/vagator/v2/send_login_otp_v2", json=payload1, headers=headers).json()
         req_key = r1.get('request_key')
@@ -41,13 +41,12 @@ def get_fyers_access_token():
         r2 = s.post("https://api-t2.fyers.in/vagator/v2/verify_otp", json={"request_key": req_key, "otp": otp}, headers=headers).json()
         req_key = r2.get('request_key')
 
-        # Step 3: PIN (Base64)
+        # Step 3: PIN
         payload3 = {"request_key": req_key, "identity_type": "pin", "identifier": base64.b64encode(PIN.encode()).decode()}
         r3 = s.post("https://api-t2.fyers.in/vagator/v2/verify_pin_v2", json=payload3, headers=headers).json()
         token_v2 = r3['data']['access_token']
 
         # Step 4: Authorization Code Exchange
-        # short_app_id for the exchange: UYBE1LJKT6
         short_app_id = APP_ID.split('-')[0]
         headers_auth = {'Authorization': f'Bearer {token_v2}', 'Content-Type': 'application/json'}
         payload4 = {
@@ -56,16 +55,18 @@ def get_fyers_access_token():
         }
         r4 = s.post("https://api-t1.fyers.in/api/v3/token", json=payload4, headers=headers_auth).json()
         
-        if r4.get('s') == 'ok' and 'data' in r4:
-            auth_code = r4['data']['auth']
-            print("✅ Auth Code received. Exchanging for Access Token...")
+        # 🚨 THE FIX: Check if Fyers returns the Redirect URL or the Consent Screen
+        if 'Url' in r4:
+            auth_code = r4['Url'].split('auth_code=')[1].split('&')[0]
+            print("✅ Auth Code received.")
+        elif 'data' in r4 and 'permissions' in r4['data']:
+            print("🛑 STOP: Fyers is asking for Consent. You must manually authorize the app in a browser first!")
+            return None
         else:
             print(f"🛑 Step 4 Failed: {r4}")
             return None
 
-        # Step 5: Final Token Generation (SDK Native Way)
-        # We pass the full APP_ID (with -100) and the SECRET_ID here.
-        # The SDK will automatically generate the appIdHash internally.
+        # Step 5: Final Token Generation
         session = fyersModel.SessionModel(
             client_id=APP_ID, 
             secret_key=SECRET_ID, 
@@ -73,7 +74,6 @@ def get_fyers_access_token():
             response_type="code", 
             grant_type="authorization_code"
         )
-        
         session.set_token(auth_code)
         response = session.generate_token()
         
@@ -81,7 +81,6 @@ def get_fyers_access_token():
             print("🚀 Access Token generated successfully!")
             return response["access_token"]
         else:
-            # If this still fails, it prints the exact error from Fyers
             print(f"🛑 Final Token Exchange Failed: {response}")
             return None
 
