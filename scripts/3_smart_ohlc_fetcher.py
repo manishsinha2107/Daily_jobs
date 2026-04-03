@@ -25,7 +25,7 @@ TOTP_KEY = os.getenv("FYERS_TOTP_KEY")
 REDIRECT_URL = "https://trade.fyers.in/api-login/redirect-uri/index.html"
 
 def get_fyers_access_token():
-    """Headless Authentication Flow (2026 SDK Fixed)"""
+    """Headless Authentication Flow (2026 SDK Native Handshake)"""
     print("🔐 Starting Secure Fyers Auth...")
     s = requests.Session()
     headers = {'Accept': 'application/json', 'Content-Type': 'application/json'}
@@ -47,6 +47,7 @@ def get_fyers_access_token():
         token_v2 = r3['data']['access_token']
 
         # Step 4: Authorization Code Exchange
+        # short_app_id for the exchange: UYBE1LJKT6
         short_app_id = APP_ID.split('-')[0]
         headers_auth = {'Authorization': f'Bearer {token_v2}', 'Content-Type': 'application/json'}
         payload4 = {
@@ -62,7 +63,9 @@ def get_fyers_access_token():
             print(f"🛑 Step 4 Failed: {r4}")
             return None
 
-        # Step 5: Final Token Generation (SDK Corrected Syntax)
+        # Step 5: Final Token Generation (SDK Native Way)
+        # We pass the full APP_ID (with -100) and the SECRET_ID here.
+        # The SDK will automatically generate the appIdHash internally.
         session = fyersModel.SessionModel(
             client_id=APP_ID, 
             secret_key=SECRET_ID, 
@@ -71,7 +74,6 @@ def get_fyers_access_token():
             grant_type="authorization_code"
         )
         
-        # The SDK expects you to SET the token first, then call generate without arguments
         session.set_token(auth_code)
         response = session.generate_token()
         
@@ -79,6 +81,7 @@ def get_fyers_access_token():
             print("🚀 Access Token generated successfully!")
             return response["access_token"]
         else:
+            # If this still fails, it prints the exact error from Fyers
             print(f"🛑 Final Token Exchange Failed: {response}")
             return None
 
