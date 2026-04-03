@@ -1,0 +1,6 @@
+pandas
+requests
+supabase
+python-dotenv
+fyers-apiv3
+pyotp
