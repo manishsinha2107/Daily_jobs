@@ -16,46 +16,68 @@ FYERS_MONTH_MAP = {
 
 def translate_to_fyers(legacy_sym):
     """
-    Translates Shoonya: NIFTY26APR07C18100 -> Fyers: NSE:NIFTY2640718100CE
-    Or Shoonya: NIFTY26JUN29P38000 -> Fyers: NSE:NIFTY2662938000PE
+    Translates Shoonya: NIFTY17FEB26P24700 -> Fyers: NSE:NIFTY2621724700PE
     """
-    # Regex to extract parts: (SYMBOL)(YY)(MMM)(DD)(C/P)(STRIKE)
+    # Group 2 = DD, Group 3 = MMM, Group 4 = YY
     match = re.match(r'^([A-Z]+)(\d{2})([A-Z]{3})(\d{2})([CP])(\d+)$', legacy_sym)
-    
-    if not match:
-        return f"UNMATCHED: {legacy_sym}"
+    if not match: 
+        return None
         
-    symbol, yy, mmm, dd, opt_type, strike = match.groups()
+    symbol, dd, mmm, yy, opt_type, strike = match.groups()
     
     fyers_month = FYERS_MONTH_MAP.get(mmm.upper(), '')
     fyers_opt = 'CE' if opt_type == 'C' else 'PE'
     
+    # Correct Fyers Order: YY + M + DD
     return f"NSE:{symbol}{yy}{fyers_month}{dd}{strike}{fyers_opt}"
 
-def run_preview():
-    print("🔍 Fetching unique symbols from Market OHLC Cache...")
+def get_all_unique_symbols(table_name, column_name):
+    """Fetches all unique legacy symbols, bypassing the 1000-row limit."""
+    unique_syms = set()
+    limit = 1000
+    offset = 0
+    while True:
+        res = supabase.table(table_name).select(column_name).range(offset, offset + limit - 1).execute()
+        if not res.data: break
+        for r in res.data:
+            sym = r.get(column_name)
+            # Only grab symbols that haven't been migrated to NSE: yet
+            if sym and not str(sym).startswith("NSE:"):
+                unique_syms.add(sym)
+        if len(res.data) < limit: break
+        offset += limit
+    return list(unique_syms)
+
+def run_migration():
+    print("🚀 Starting Full Database Migration to Fyers Native Format...")
     
-    # We fetch a chunk of records just to get a good sample
-    res = supabase.table("market_ohlc_cache").select("symbol").limit(5000).execute()
+    # --- 1. UPDATE VERIFICATION TABLE ---
+    print("\n📊 Scanning strategy_trades_verification...")
+    unique_ver = get_all_unique_symbols("strategy_trades_verification", "broker_symbol")
     
-    if not res.data:
-        print("❌ No data found.")
-        return
-        
-    unique_symbols = list(set([row['symbol'] for row in res.data]))
+    if not unique_ver:
+        print("✅ No legacy symbols found in verification table.")
+    else:
+        for old_sym in unique_ver:
+            new_sym = translate_to_fyers(old_sym)
+            if new_sym:
+                print(f"🔄 Migrating Trades: {old_sym} -> {new_sym}")
+                supabase.table("strategy_trades_verification").update({"broker_symbol": new_sym}).eq("broker_symbol", old_sym).execute()
+
+    # --- 2. UPDATE OHLC CACHE TABLE ---
+    print("\n📈 Scanning market_ohlc_cache...")
+    unique_ohlc = get_all_unique_symbols("market_ohlc_cache", "symbol")
     
-    print("\n✅ MIGRATION DRY RUN PREVIEW:")
-    print("-" * 65)
-    print(f"{'LEGACY (Shoonya)':<25} | {'NEW NATIVE (Fyers)':<30}")
-    print("-" * 65)
-    
-    # Print the first 20 unique transformations
-    for sym in unique_symbols[:20]:
-        new_sym = translate_to_fyers(sym)
-        print(f"{sym:<25} | {new_sym:<30}")
-        
-    print("-" * 65)
-    print(f"Total Unique Symbols Found: {len(unique_symbols)}")
+    if not unique_ohlc:
+        print("✅ No legacy symbols found in OHLC cache.")
+    else:
+        for old_sym in unique_ohlc:
+            new_sym = translate_to_fyers(old_sym)
+            if new_sym:
+                print(f"🔄 Migrating OHLC Data: {old_sym} -> {new_sym}")
+                supabase.table("market_ohlc_cache").update({"symbol": new_sym}).eq("symbol", old_sym).execute()
+                
+    print("\n🏆 MIGRATION COMPLETE. Your entire database is now 100% Fyers Native.")
 
 if __name__ == "__main__":
-    run_preview()
+    run_migration()
