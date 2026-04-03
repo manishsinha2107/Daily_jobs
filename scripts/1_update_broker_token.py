@@ -44,11 +44,13 @@ def sync_fyers_tokens():
     for _, row in options_df.iterrows():
         # row[0] = fyToken (e.g., 101126040740530)
         # row[9] = SymbolTicker (e.g., NSE:NIFTY2640719600CE)
+        # row[13] = Underlying (e.g., NIFTY)
         payload.append({
-            "original_token": str(row[0]),
+            "token_id": str(row[0]),
             "tsym": str(row[9]),
-            "source": "MODERN (Fyers)",
-            "sync_date": today_str
+            "symbol": str(row[13]),
+            "last_validated": datetime.now().isoformat(),
+            "is_historical": False
         })
 
     # 4. Clear out the old Legacy tokens (Optional but recommended for a clean break)
