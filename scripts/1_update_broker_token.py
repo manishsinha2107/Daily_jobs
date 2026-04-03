@@ -17,25 +17,23 @@ SYMBOL_URLS = {"NSE_FO": "https://public.fyers.in/sym_details/NSE_FO.csv"}
 
 def format_to_legacy(row):
     try:
-        # 1. Base Name from Col 13
-        base = str(row[13]).strip() # e.g. NIFTY
-        
-        # 2. Expiry from Col 8 (Epoch)
+        base = str(row[13]).strip() 
         dt = pd.to_datetime(int(row[8]), unit='s')
-        day = dt.strftime('%d')           # 24
-        month = dt.strftime('%b').upper() # FEB
+        
+        # --- THE FIX: SWAP DAY AND YEAR ---
         year = dt.strftime('%y')          # 26
+        month = dt.strftime('%b').upper() # APR
+        day = dt.strftime('%d')           # 07
+        # ----------------------------------
         
-        # 3. Strike from Col 15
-        strike = str(int(float(row[15]))) # 25550
-        
-        # 4. Option Type from Col 16
+        strike = str(int(float(row[15])))
         opt = 'C' if str(row[16]) == 'CE' else 'P' if str(row[16]) == 'PE' else None
         
-        if not opt: return None # Skip Futures/Indices
+        if not opt: return None 
         
-        # Result: NIFTY + 24 + FEB + 26 + P + 25550
-        return f"{base}{day}{month}{year}{opt}{strike}"
+        # Result: NIFTY + 26 + APR + 07 + C + 19600 
+        # (Matches NIFTY + 26 + JUN + 29 + P)
+        return f"{base}{year}{month}{day}{opt}{strike}"
     except:
         return None
 
