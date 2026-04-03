@@ -3,91 +3,94 @@ import sys
 import pyotp
 import requests
 import pandas as pd
-from datetime import datetime, timedelta
+from datetime import datetime
 from fyers_apiv3 import fyersModel
 from dotenv import load_dotenv
 from supabase import create_client, Client
 
 # --- 1. INITIALIZATION ---
 load_dotenv()
-SUPABASE_URL = os.getenv("SUPABASE_URL")
-SUPABASE_KEY = os.getenv("SUPABASE_KEY")
-supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
+supabase: Client = create_client(os.getenv("SUPABASE_URL"), os.getenv("SUPABASE_KEY"))
 
-# Fyers Credentials
+# Fyers Config
+CLIENT_ID = os.getenv("FYERS_USERNAME")
 APP_ID = os.getenv("FYERS_APP_ID")
 SECRET_ID = os.getenv("FYERS_SECRET_ID")
-USERNAME = os.getenv("FYERS_USERNAME")
 PIN = os.getenv("FYERS_PIN")
 TOTP_KEY = os.getenv("FYERS_TOTP_KEY")
-REDIRECT_URL = "https://trade.fyers.in/api-login/redirect-uri/index.html"
 
-def get_access_token():
-    """Automated Headless Login for Fyers V3 (2026 Compatible)"""
+def get_fyers_access_token():
+    """Headless Auth to bypass browser login on GitHub Actions"""
     try:
-        print("🔐 Generating Fyers Access Token...")
-        # 1. Get TOTP
-        totp = pyotp.TOTP(TOTP_KEY).now()
+        print("🔐 Authenticating with Fyers...")
+        # Step 1: Send Client ID
+        ses = requests.Session()
+        payload1 = {"client_id": APP_ID, "redirect_uri": "https://trade.fyers.in/api-login/redirect-uri/index.html", "response_type": "code", "state": "sample_state"}
+        res1 = ses.post("https://api-t1.fyers.in/api/v3/generate-authcode", json=payload1).json()
         
-        # 2. Fyers Login Session logic (Simplified for SDK use)
-        # Note: In a real GH Action, we use the session to get the auth_code
-        session = fyersModel.SessionModel(
-            client_id=APP_ID,
-            secret_key=SECRET_ID,
-            redirect_uri=REDIRECT_URL,
-            response_type="code",
-            grant_type="authorization_code"
-        )
+        # Step 2: Send TOTP
+        otp = pyotp.TOTP(TOTP_KEY).now()
+        payload2 = {"request_key": res1['request_key'], "otp": otp}
+        res2 = ses.post("https://api-t1.fyers.in/api/v3/validate-otp", json=payload2).json()
         
-        # This part requires a helper to simulate the browser login
-        # For brevity in this step, we assume the helper returns the auth_code
-        # In the final delivery, I'll include the helper function if needed.
-        # For now, let's focus on the Fetcher logic.
+        # Step 3: Send PIN
+        payload3 = {"request_key": res2['request_key'], "pin": PIN}
+        res3 = ses.post("https://api-t1.fyers.in/api/v3/validate-pin", json=payload3).json()
         
-        # Mocking the token for logic flow - replace with actual auth logic
-        # return session.generate_token(auth_code)
-        pass 
+        # Step 4: Generate Access Token
+        auth_code = res3['data']['authorization_code']
+        session = fyersModel.SessionModel(client_id=APP_ID, secret_key=SECRET_ID, redirect_uri="https://trade.fyers.in/api-login/redirect-uri/index.html", response_type="code", grant_type="authorization_code")
+        session.set_token(auth_code)
+        response = session.generate_token()
+        return response["access_token"]
     except Exception as e:
-        print(f"❌ Login Failed: {e}")
+        print(f"❌ Auth Failed: {e}")
         return None
 
-def fetch_and_cache_ohlc():
-    # 1. Identify what to fetch
-    res = supabase.table("strategy_trades_verification") \
-        .select("broker_symbol, trade_date, token_id") \
-        .eq("ohlc_status", "pending_api_search") \
-        .execute()
-    
-    tasks = res.data
+def fetch_ohlc():
+    # 1. Login
+    access_token = get_fyers_access_token()
+    if not access_token: return
+    fyers = fyersModel.FyersModel(client_id=APP_ID, token=access_token, is_async=False, log_path="")
+
+    # 2. Get pending tasks
+    tasks = supabase.table("strategy_trades_verification").select("*").eq("ohlc_status", "pending_api_search").limit(10).execute().data
     if not tasks:
-        print("☕ No pending OHLC tasks. Exiting.")
+        print("✅ No pending tasks.")
         return
 
-    # 2. Initialize Fyers (Assuming token is valid)
-    # fyers = fyersModel.FyersModel(client_id=APP_ID, token=access_token)
-    
     for task in tasks:
         sym = task['broker_symbol']
         t_date = task['trade_date']
-        # Fyers requires 'EXCHANGE:SYMBOL'
-        fyers_sym = f"NSE:{sym}" # We'll need a bridge if sym is missing 'NSE:'
+        fyers_sym = f"NSE:{sym}" # Bridge to Fyers format
         
         print(f"📥 Fetching {sym} for {t_date}...")
         
-        # data = {
-        #     "symbol": fyers_sym,
-        #     "resolution": "1",
-        #     "date_format": "1",
-        #     "range_from": t_date,
-        #     "range_to": t_date,
-        #     "cont_flag": "1"
-        # }
-        # response = fyers.history(data=data)
+        data = {"symbol": fyers_sym, "resolution": "1", "date_format": "1", "range_from": t_date, "range_to": t_date, "cont_flag": "1"}
+        response = fyers.history(data=data)
         
-        # 3. Transform Fyers [epoch, o, h, l, c, v] to your format
-        # 4. Upsert to market_ohlc_cache
-        # 5. Update strategy_trades_verification status to 'success'
+        if response.get("s") == "ok":
+            candles = response.get("candles", [])
+            ohlc_batch = []
+            for c in candles:
+                # Fyers candle: [epoch, o, h, l, c, v]
+                dt_obj = datetime.fromtimestamp(c[0])
+                # Format to match your legacy AM/PM style: 9:31 AM (no leading zero on hour)
+                ts_str = dt_obj.strftime("%Y-%m-%d %-I:%M %p") 
+                
+                ohlc_batch.append({
+                    "token": str(task['token_id']),
+                    "ts": ts_str,
+                    "symbol": sym, # Saved back in your legacy format
+                    "open": float(c[1]), "high": float(c[2]), "low": float(c[3]), "close": float(c[4]), "volume": int(c[5])
+                })
+            
+            if ohlc_batch:
+                supabase.table("market_ohlc_cache").upsert(ohlc_batch).execute()
+                supabase.table("strategy_trades_verification").update({"ohlc_status": "success"}).eq("id", task["id"]).execute()
+                print(f"✅ Cached {len(ohlc_batch)} mins for {sym}")
+        else:
+            print(f"⚠️ Error for {sym}: {response.get('message')}")
 
 if __name__ == "__main__":
-    # fetch_and_cache_ohlc()
-    pass
+    fetch_ohlc()
