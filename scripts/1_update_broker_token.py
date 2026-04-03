@@ -55,7 +55,7 @@ def sync_fyers_tokens():
 
     # 4. Clear out the old Legacy tokens (Optional but recommended for a clean break)
     print("🧹 Clearing legacy tokens from database...")
-    supabase.table("broker_tokens").delete().neq("source", "keep_dummy").execute()
+    supabase.table("broker_tokens").delete().neq("token_id", "0").execute()
 
     # 5. Bulk Upsert in batches of 1000
     print(f"🚀 Upserting {len(payload)} native Fyers tokens...")
