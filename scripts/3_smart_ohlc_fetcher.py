@@ -25,7 +25,7 @@ TOTP_KEY = os.getenv("FYERS_TOTP_KEY")
 REDIRECT_URL = "https://trade.fyers.in/api-login/redirect-uri/index.html"
 
 def get_fyers_access_token():
-    """Headless Authentication Flow (2026 Fixed)"""
+    """Headless Authentication Flow (2026 V3 Confirmed)"""
     print("🔐 Starting Secure Fyers Auth...")
     s = requests.Session()
     headers = {'Accept': 'application/json', 'Content-Type': 'application/json'}
@@ -46,7 +46,7 @@ def get_fyers_access_token():
         r3 = s.post("https://api-t2.fyers.in/vagator/v2/verify_pin_v2", json=payload3, headers=headers).json()
         token_v2 = r3['data']['access_token']
 
-        # Step 4: Authorization Code Exchange (FIXED FOR 2026)
+        # Step 4: Authorization Code Exchange
         headers_auth = {'Authorization': f'Bearer {token_v2}', 'Content-Type': 'application/json'}
         payload4 = {
             "fyers_id": FY_ID, "app_id": APP_ID.split('-')[0], "redirect_uri": REDIRECT_URL, 
@@ -54,24 +54,31 @@ def get_fyers_access_token():
         }
         r4 = s.post("https://api-t1.fyers.in/api/v3/token", json=payload4, headers=headers_auth).json()
         
-        # In 2026, the auth_code is inside r4['data']['authorization_code']
+        # 2026 Logic: The code is in the 'auth' key inside 'data'
         if r4.get('s') == 'ok' and 'data' in r4:
-            auth_code = r4['data']['authorization_code']
+            auth_code = r4['data']['auth']
+            print("✅ Auth Code received successfully.")
         else:
             print(f"🛑 Step 4 Failed. Response: {r4}")
             return None
 
         # Step 5: Final Token Generation
-        # We must use the appIdHash (SHA256 of APP_ID:SECRET_ID)
-        app_id_hash = hashlib.sha256(f"{APP_ID}:{SECRET_ID}".encode()).hexdigest()
-        
         session = fyersModel.SessionModel(
-            client_id=APP_ID, secret_key=SECRET_ID, redirect_uri=REDIRECT_URL, 
-            response_type="code", grant_type="authorization_code"
+            client_id=APP_ID, 
+            secret_key=SECRET_ID, 
+            redirect_uri=REDIRECT_URL, 
+            response_type="code", 
+            grant_type="authorization_code"
         )
-        # Using the direct validate_authcode logic to be safe
-        response = session.generate_token({"grant_type": "authorization_code", "appIdHash": app_id_hash, "code": auth_code})
-        return response["access_token"]
+        session.set_token(auth_code)
+        response = session.generate_token()
+        
+        if "access_token" in response:
+            print("🚀 Access Token generated!")
+            return response["access_token"]
+        else:
+            print(f"🛑 Final Token Exchange Failed: {response}")
+            return None
 
     except Exception as e:
         print(f"⚠️ Auth Exception: {str(e)}")
