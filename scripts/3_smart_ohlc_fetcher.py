@@ -31,7 +31,7 @@ def get_fyers_access_token():
     headers = {'Accept': 'application/json', 'Content-Type': 'application/json'}
     
     try:
-        # Step 1: Client ID
+        # Step 1: Client ID (Base64)
         payload1 = {"fy_id": base64.b64encode(FY_ID.encode()).decode(), "app_id": "2"}
         r1 = s.post("https://api-t2.fyers.in/vagator/v2/send_login_otp_v2", json=payload1, headers=headers).json()
         req_key = r1.get('request_key')
@@ -41,43 +41,56 @@ def get_fyers_access_token():
         r2 = s.post("https://api-t2.fyers.in/vagator/v2/verify_otp", json={"request_key": req_key, "otp": otp}, headers=headers).json()
         req_key = r2.get('request_key')
 
-        # Step 3: PIN
+        # Step 3: PIN (Base64)
         payload3 = {"request_key": req_key, "identity_type": "pin", "identifier": base64.b64encode(PIN.encode()).decode()}
         r3 = s.post("https://api-t2.fyers.in/vagator/v2/verify_pin_v2", json=payload3, headers=headers).json()
         token_v2 = r3['data']['access_token']
 
         # Step 4: Authorization Code Exchange
+        # IMPORTANT: app_id here is usually the first part (before the hyphen)
+        short_app_id = APP_ID.split('-')[0]
         headers_auth = {'Authorization': f'Bearer {token_v2}', 'Content-Type': 'application/json'}
         payload4 = {
-            "fyers_id": FY_ID, "app_id": APP_ID.split('-')[0], "redirect_uri": REDIRECT_URL, 
-            "appType": "100", "response_type": "code", "state": "abcdefg"
+            "fyers_id": FY_ID, 
+            "app_id": short_app_id, 
+            "redirect_uri": REDIRECT_URL, 
+            "appType": "100", 
+            "response_type": "code", 
+            "state": "abcdefg"
         }
         r4 = s.post("https://api-t1.fyers.in/api/v3/token", json=payload4, headers=headers_auth).json()
         
         if r4.get('s') == 'ok' and 'data' in r4:
             auth_code = r4['data']['auth']
-            print("✅ Auth Code received. Exchanging for Access Token...")
+            print("✅ Auth Code received. Validating...")
         else:
             print(f"🛑 Step 4 Failed: {r4}")
             return None
 
-        # Step 5: Final Token Generation (Direct API call with SHA256 Hash)
-        # The 'appIdHash' is the SHA256 of 'APP_ID:SECRET_ID'
+        # Step 5: Final Token Generation (SDK method with explicit appIdHash)
+        # Fyers requires the full APP_ID:SECRET_ID hash
         app_id_hash = hashlib.sha256(f"{APP_ID}:{SECRET_ID}".encode()).hexdigest()
         
-        payload5 = {
+        session = fyersModel.SessionModel(
+            client_id=APP_ID, 
+            secret_key=SECRET_ID, 
+            redirect_uri=REDIRECT_URL, 
+            response_type="code", 
+            grant_type="authorization_code"
+        )
+        
+        # We manually call the validate endpoint via the SDK session
+        response = session.generate_token({
             "grant_type": "authorization_code",
             "appIdHash": app_id_hash,
             "code": auth_code
-        }
+        })
         
-        r5 = requests.post("https://api-t1.fyers.in/api/v3/validate-authcode", json=payload5, headers=headers).json()
-        
-        if r5.get('s') == 'ok' and 'access_token' in r5:
+        if response.get("s") == "ok" and "access_token" in response:
             print("🚀 Access Token generated successfully!")
-            return r5["access_token"]
+            return response["access_token"]
         else:
-            print(f"🛑 Final Token Exchange Failed: {r5}")
+            print(f"🛑 Final Token Exchange Failed: {response}")
             return None
 
     except Exception as e:
