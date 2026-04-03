@@ -47,14 +47,14 @@ jobs:
           echo "🚀 Step 2: Trade Verification"
           python scripts/2_update_strategy_trades_verification.py
 
-          # echo "🚀 Step 3: OHLC Fetcher"
-          # python scripts/3_smart_ohlc_fetcher.py
+          echo "🚀 Step 3: OHLC Fetcher"
+          python scripts/3_smart_ohlc_fetcher.py
 
-          # echo "🚀 Step 4: PnL Closing (1-Min)"
-          # python scripts/4_pnl_processor_1min_closing.py
+          echo "🚀 Step 4: PnL Closing (1-Min)"
+          python scripts/4_pnl_processor_1min_closing.py
 
-          # echo "🚀 Step 5: PnL OHLC (High-Fi)"
-          # python scripts/5_pnl_processor_1min_ohlc.py
+          echo "🚀 Step 5: PnL OHLC (High-Fi)"
+          python scripts/5_pnl_processor_1min_ohlc.py
 
           # echo "🚀 Step 6: Daily P&L Sync"
           # python scripts/6_pnl_refresh.py
