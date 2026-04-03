@@ -19,4 +19,4 @@ jobs:
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
-        run: python scripts/2_update_strategy_trades_verification.py
+        run: python -u scripts/2_update_strategy_trades_verification.py
