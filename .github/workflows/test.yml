@@ -55,13 +55,13 @@ jobs:
         run: |
 
 
-          echo "🚀 Step 6: PnL OHLC (High-Fi)"
+          echo "🚀 Step 6: Daily Strategy PNL Table"
           python scripts/6_pnl_refresh.py
 
-          echo "🚀 Step 7: Daily Strategy PNL Table"
+          echo "🚀 Step 7: Expectency Update"
           python scripts/7_expectency_calc.py
           
-          echo "🚀 Step 8: Expectency Update"
+          echo "🚀 Step 8: Social Media Post Update"
           python social_repo/scripts/4_personal_broadcast.py
 
           echo "✅ FULL PIPELINE COMPLETED SUCCESSFULLY!"
