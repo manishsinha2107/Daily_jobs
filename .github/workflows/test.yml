@@ -1,0 +1,86 @@
+name: 🔑 Daily Data Pipeline
+
+on:
+  workflow_dispatch:
+  repository_dispatch:
+    types: [trigger_pipeline]
+
+jobs:
+  execute-pipeline:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Checkout SocialMedia Repo
+        uses: actions/checkout@v4
+        with:
+          repository: manishsinha2107/socialmedia
+          token: ${{ secrets.EXTERNAL_REPO_TOKEN }}
+          path: social_repo
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: Install Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          # Added playwright and google-api-python-client for the downloader
+          pip install pandas numpy supabase google-auth openpyxl requests python-dotenv pyotp pytz websocket-client fyers-apiv3 playwright google-api-python-client
+          
+          # CRITICAL: Install Chromium and system dependencies for the downloader
+          playwright install chromium --with-deps
+
+          # Install Social Media dependencies
+          pip install -r social_repo/requirements.txt
+
+      - name: Run Sequence
+        env:
+          PYTHONPATH: ${{ github.workspace }}/scripts:${{ github.workspace }}/social_repo
+          PYTHONUNBUFFERED: "1"
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+          GDRIVE_SERVICE_ACCOUNT_JSON: ${{ secrets.GDRIVE_SERVICE_ACCOUNT_JSON }}
+          FYERS_APP_ID: ${{ secrets.FYERS_APP_ID }}
+          FYERS_SECRET_ID: ${{ secrets.FYERS_SECRET_ID }}
+          FYERS_USERNAME: ${{ secrets.FYERS_USERNAME }}
+          FYERS_PIN: ${{ secrets.FYERS_PIN }}
+          FYERS_TOTP_KEY: ${{ secrets.FYERS_TOTP_KEY }}
+          SOURCE_FOLDER: ${{ secrets.SOURCE_FOLDER }}
+          DEST_FOLDER: ${{ secrets.DEST_FOLDER }}
+          MASTER_BOT_TOKEN: ${{ secrets.MASTER_BOT_TOKEN }}
+          PERSONAL_CHANNEL_ID: ${{ secrets.PERSONAL_CHANNEL_ID }}
+        run: |
+          echo "🚀 Step -1: Tradetron CSV Downloader (Playwright)"
+          python scripts/0_trade_downloader.py
+
+          echo "🚀 Step 0: Trade Ingestor (Drive to Supabase Audit)"
+          python scripts/0_trade_ingestor.py
+
+          echo "🚀 Step 1: Broker Tokens"
+          python scripts/1_update_broker_token.py
+
+          echo "🚀 Step 2: Trade Verification"
+          python scripts/2_update_strategy_trades_verification.py
+
+          echo "🚀 Step 3: OHLC Fetcher (Self-Healing Fyers)"
+          python scripts/3_smart_ohlc_fetcher.py
+
+          echo "🚀 Step 4: PnL Closing (1-Min)"
+          python scripts/4_pnl_processor_1min_closing.py
+
+          echo "🚀 Step 5: PnL OHLC (High-Fi)"
+          python scripts/5_pnl_processor_1min_ohlc.py
+
+          echo "🚀 Step 6: PnL OHLC (High-Fi)"
+          python scripts/6_pnl_refesh.py
+
+          echo "🚀 Step 7: Daily Strategy PNL Table"
+          python scripts/7_expectency_calc.py
+          
+          echo "🚀 Step 8: Expectency Update"
+          python social_repo/scripts/4_personal_broadcast.py
+
+          echo "✅ FULL PIPELINE COMPLETED SUCCESSFULLY!"
