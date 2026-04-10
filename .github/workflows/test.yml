@@ -53,29 +53,10 @@ jobs:
           MASTER_BOT_TOKEN: ${{ secrets.MASTER_BOT_TOKEN }}
           PERSONAL_CHANNEL_ID: ${{ secrets.PERSONAL_CHANNEL_ID }}
         run: |
-          echo "🚀 Step -1: Tradetron CSV Downloader (Playwright)"
-          python scripts/0_trade_downloader.py
 
-          echo "🚀 Step 0: Trade Ingestor (Drive to Supabase Audit)"
-          python scripts/0_trade_ingestor.py
-
-          echo "🚀 Step 1: Broker Tokens"
-          python scripts/1_update_broker_token.py
-
-          echo "🚀 Step 2: Trade Verification"
-          python scripts/2_update_strategy_trades_verification.py
-
-          echo "🚀 Step 3: OHLC Fetcher (Self-Healing Fyers)"
-          python scripts/3_smart_ohlc_fetcher.py
-
-          echo "🚀 Step 4: PnL Closing (1-Min)"
-          python scripts/4_pnl_processor_1min_closing.py
-
-          echo "🚀 Step 5: PnL OHLC (High-Fi)"
-          python scripts/5_pnl_processor_1min_ohlc.py
 
           echo "🚀 Step 6: PnL OHLC (High-Fi)"
-          python scripts/6_pnl_refesh.py
+          python scripts/6_pnl_refresh.py
 
           echo "🚀 Step 7: Daily Strategy PNL Table"
           python scripts/7_expectency_calc.py
