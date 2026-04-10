@@ -1,4 +1,4 @@
-name: 🔑 Daily Data Pipeline
+name: 🔑 TEST Daily Data Pipeline
 
 on:
   workflow_dispatch:
