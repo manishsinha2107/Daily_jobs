@@ -1,4 +1,4 @@
-name: 🔑 Daily Data Pipeline
+name: 🔑 TEST Daily Data Pipeline
 
 on:
   workflow_dispatch:
@@ -11,6 +11,13 @@ jobs:
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
+
+      - name: Checkout SocialMedia Repo
+        uses: actions/checkout@v4
+        with:
+          repository: manishsinha2107/socialmedia
+          token: ${{ secrets.EXTERNAL_REPO_TOKEN }}
+          path: social_repo
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -26,9 +33,12 @@ jobs:
           # CRITICAL: Install Chromium and system dependencies for the downloader
           playwright install chromium --with-deps
 
+          # Install Social Media dependencies
+          pip install -r social_repo/requirements.txt
+
       - name: Run Sequence
         env:
-          PYTHONPATH: ${{ github.workspace }}/scripts
+          PYTHONPATH: ${{ github.workspace }}/scripts:${{ github.workspace }}/social_repo
           PYTHONUNBUFFERED: "1"
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
@@ -40,7 +50,10 @@ jobs:
           FYERS_TOTP_KEY: ${{ secrets.FYERS_TOTP_KEY }}
           SOURCE_FOLDER: ${{ secrets.SOURCE_FOLDER }}
           DEST_FOLDER: ${{ secrets.DEST_FOLDER }}
+          MASTER_BOT_TOKEN: ${{ secrets.MASTER_BOT_TOKEN }}
+          PERSONAL_CHANNEL_ID: ${{ secrets.PERSONAL_CHANNEL_ID }}
         run: |
+
           echo "🚀 Step -1: Tradetron CSV Downloader (Playwright)"
           python scripts/0_trade_downloader.py
 
@@ -61,5 +74,14 @@ jobs:
 
           echo "🚀 Step 5: PnL OHLC (High-Fi)"
           python scripts/5_pnl_processor_1min_ohlc.py
+          
+          echo "🚀 Step 6: Daily Strategy PNL Table"
+          python scripts/6_pnl_refresh.py
+
+          echo "🚀 Step 7: Expectency Update"
+          python scripts/7_expectancy_calc.py
+          
+          echo "🚀 Step 8: Social Media Post Update"
+          python social_repo/scripts/4_personal_broadcast.py
 
           echo "✅ FULL PIPELINE COMPLETED SUCCESSFULLY!"
