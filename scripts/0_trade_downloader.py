@@ -6,6 +6,7 @@ import pandas as pd
 from dotenv import load_dotenv
 from supabase import create_client, Client
 from playwright.async_api import async_playwright
+import config
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseUpload
@@ -67,13 +68,13 @@ def upload_to_drive(file_path, file_name):
 
 async def run_smart_downloader():
     update_heartbeat("running", "📡 Initializing Tradetron Scraper...")
-    log("📡 Fetching strategies from Supabase...")
+    log(f"📡 Fetching {config.DEPLOYMENT_TYPES} strategies from Supabase...")
     
     supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)    
     res = supabase.table("strategies") \
         .select("user_email, email_password, strategy_name") \
         .eq("status", "Active") \
-        .in_("deployment_type", ["Live Offline", "Live Auto"]) \
+        .in_("deployment_type", config.DEPLOYMENT_TYPES) \
         .execute()
     
     if not res.data:
