@@ -2,7 +2,7 @@ import os
 
 # SET THIS TO True to run ONLY "Live Auto"
 # SET THIS TO False to run BOTH "Live Offline" and "Live Auto"
-ONLY_LIVE_AUTO = True 
+ONLY_LIVE_AUTO = False 
 
 # Logic to determine the filter list
 if os.environ.get("RUN_MODE") == "LIVE_AUTO" or ONLY_LIVE_AUTO:
