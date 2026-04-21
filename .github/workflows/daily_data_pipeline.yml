@@ -1,4 +1,4 @@
-name: 🔑 Daily Data Pipeline
+name: 🔑 TEST Daily Data Pipeline
 
 on:
   workflow_dispatch:
@@ -15,7 +15,7 @@ jobs:
       - name: Checkout SocialMedia Repo
         uses: actions/checkout@v4
         with:
-          repository: manishsinha2107/socialmedia
+          repository: manish-dailyjobs/socialmedia
           token: ${{ secrets.EXTERNAL_REPO_TOKEN }}
           path: social_repo
 
