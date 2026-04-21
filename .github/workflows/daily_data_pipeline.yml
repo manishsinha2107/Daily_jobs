@@ -1,9 +1,9 @@
-name: 🔑 TEST Daily Data Pipeline
+name: 🔑 Daily Data Pipeline
 
 on:
   workflow_dispatch:
   repository_dispatch:
-    types: [trigger_pipeline]
+    types: [Daily_Data_Pipeline]
 
 jobs:
   execute-pipeline:
