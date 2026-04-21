@@ -3,7 +3,7 @@ name: 🔑 Daily Data Pipeline
 on:
   workflow_dispatch:
   repository_dispatch:
-    types: [Daily_Data_Pipeline]
+    types: [trigger_data_pipeline]
 
 jobs:
   execute-pipeline:
