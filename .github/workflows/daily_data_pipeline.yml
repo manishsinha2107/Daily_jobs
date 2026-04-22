@@ -15,7 +15,7 @@ jobs:
       - name: Checkout SocialMedia Repo
         uses: actions/checkout@v4
         with:
-          repository: manish-dailyjobs/socialmedia
+          repository: manishsinha2107/socialmedia
           token: ${{ secrets.EXTERNAL_REPO_TOKEN }}
           path: social_repo
 
