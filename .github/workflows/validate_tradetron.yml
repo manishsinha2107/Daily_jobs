@@ -1,0 +1,36 @@
+name: Tradetron Filename Validation
+
+on:
+  workflow_dispatch: # Allows you to run this manually from the Actions tab
+
+jobs:
+  validate-filename:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-python-version: '3.10'
+          cache: 'pip'
+
+      - name: Install Core Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install pandas supabase playwright openpyxl
+
+      - name: Install Playwright Chromium and System Deps
+        run: |
+          npx playwright install chromium --with-deps
+
+      - name: Run Validation Script
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+        run: |
+          # Assumes your validation script is saved in the root folder. 
+          # Update the path below if you saved it inside a subfolder.
+          python test_tradetron_filename.py
