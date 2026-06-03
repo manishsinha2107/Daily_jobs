@@ -21,7 +21,7 @@ async def test_tradetron_filename():
         log("❌ ERROR: Missing SUPABASE_URL or SUPABASE_KEY in environment.")
         sys.exit(1)
 
-    # 2. Query target strategy details from Supabase
+    # 2. Query target strategy details from Supabase using exact Strategy ID
     log("📡 Querying target strategy from Supabase...")
     supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
     
@@ -31,7 +31,7 @@ async def test_tradetron_filename():
         .execute()
 
     if not res.data:
-        log(f"❌ ERROR: Target strategy '{target_strategy}' not found in database.")
+        log("❌ ERROR: Target strategy with ID '29799238' not found in database.")
         return
 
     row = res.data[0]
@@ -72,14 +72,16 @@ async def test_tradetron_filename():
             await page.locator('#search_input').type(db_strat_name, delay=50)
             await asyncio.sleep(5)
 
+            # Locate the specific container matching our exact strategy name
             container = page.locator(f"div.strategy__section:has(a:text-is('{db_strat_name}'))").first
 
             if await container.count() > 0:
                 log("🎯 Strategy container located on UI. Triggering download context...")
                 await container.locator('button[id*="More"]').click()
 
+                # CRITICAL FIX: Scope the locator to the container to prevent global strict mode violations
                 async with page.expect_download() as download_info:
-                    await page.locator('a:has-text("Download Data")').click()
+                    await container.locator('a:has-text("Download Data")').click()
 
                 download = await download_info.value
                 server_filename = download.suggested_filename
@@ -99,9 +101,8 @@ async def test_tradetron_filename():
                     print("✅ MATCH SUCCESS: Tradetron's suggested name perfectly matches the database string.")
                 else:
                     print("⚠️ MISMATCH DETECTED!")
-                    print(f"Length - DB: {len(db_strat_name)} characters | Server: {len(clean_server_name)} characters")
+                    print(f"Length - DB: {len(db_strat_name)} chars | Server: {len(clean_server_name)} chars")
                     
-                    # Character conversion analysis
                     has_spaces_in_db = " " in db_strat_name
                     has_underscores_in_server = "_" in clean_server_name
                     print(f"Does DB name contain spaces?: {has_spaces_in_db}")
