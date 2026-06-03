@@ -25,10 +25,9 @@ async def test_tradetron_filename():
     log("📡 Querying target strategy from Supabase...")
     supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
     
-    target_strategy = "Vaidehi Nifty Intraday Option Selling"
     res = supabase.table("strategies") \
         .select("user_email, email_password, strategy_name, strategy_id") \
-        .eq("strategy_name", target_strategy) \
+        .eq("strategy_id", 29799238) \
         .execute()
 
     if not res.data:
