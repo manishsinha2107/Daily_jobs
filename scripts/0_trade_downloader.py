@@ -72,7 +72,7 @@ async def run_smart_downloader():
     
     supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)    
     res = supabase.table("strategies") \
-        .select("user_email, email_password, strategy_name") \
+        .select("user_email, email_password, strategy_name, strategy_id, deployment_type") \
         .eq("status", "Active") \
         .in_("deployment_type", config.DEPLOYMENT_TYPES) \
         .execute()
@@ -132,11 +132,24 @@ async def run_smart_downloader():
                                 await container.locator('button[id*="More"]').click()
                                 
                                 async with page.expect_download() as download_info:
-                                    await page.locator('a:has-text("Download Data")').click()
+                                    await container.locator('a:has-text("Download Data")').click()
                                 
                                 download = await download_info.value
                                 temp_path = await download.path()
-                                upload_to_drive(temp_path, download.suggested_filename)
+                                
+                                # Preserve original file extension from server
+                                file_ext = os.path.splitext(download.suggested_filename)[1]
+                                
+                                # Check if strategy deployment type is strictly 'Live Auto'
+                                if str(row.get('deployment_type')).strip() == "Live Auto":
+                                    strat_id = str(row.get('strategy_id')).strip()
+                                    final_filename = f"{strat_id}_{strat_name}{file_ext}"
+                                    log(f"🏷️ Prefixing Live Auto Strategy: {final_filename}")
+                                else:
+                                    final_filename = f"{strat_name}{file_ext}"
+                                    log(f"🏷️ Using Standard Filename: {final_filename}")
+                                    
+                                upload_to_drive(temp_path, final_filename)
                             else:
                                 log(f"⏭️ {strat_name} found, but status is NOT 'Exited'.")
                         else:
