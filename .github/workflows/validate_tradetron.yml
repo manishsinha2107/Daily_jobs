@@ -33,4 +33,4 @@ jobs:
         run: |
           # Assumes your validation script is saved in the root folder. 
           # Update the path below if you saved it inside a subfolder.
-          python scripts/4_pnl_processor_1min_closing.py
+          python scripts/test_tradetron_filename.py
