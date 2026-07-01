@@ -1,5 +1,6 @@
 import os
 import json
+import pandas as pd
 from datetime import datetime, timezone
 try:
     from dotenv import load_dotenv
@@ -71,13 +72,49 @@ def build_deployment_lookup(deploy_data):
         except Exception: pass
     return lookup
 
+# --- PRE-FLIGHT SYNC ---
+def sync_strategy_statuses():
+    """Ensures historical PNL rows reflect the current master strategy status."""
+    print("🔄 Running Pre-Flight Status Sync...")
+    
+    # 1. Fetch Master Statuses
+    master_res = supabase.table("strategies").select("strategy_id, status").execute()
+    if not master_res.data:
+        print("   - No strategies found to sync.")
+        return
+        
+    master_statuses = {int(s['strategy_id']): s['status'] for s in master_res.data}
+    synced_count = 0
+    
+    # 2. Targeted .neq() Updates
+    for sid, correct_status in master_statuses.items():
+        try:
+            # Only updates rows where the status doesn't match the master status
+            res = supabase.table("daily_strategy_pnl").update({"status": correct_status}) \
+                          .eq("strategy_id", sid).neq("status", correct_status).execute()
+            
+            if res.data:
+                print(f"   -> [SYNCED] Strategy ID {sid} updated to '{correct_status}' ({len(res.data)} rows fixed).")
+                synced_count += 1
+        except Exception as e:
+            print(f"   -> [ERROR] Failed to sync ID {sid}: {e}")
+            
+    if synced_count == 0:
+        print("   ✅ All historical statuses are perfectly aligned.")
+    else:
+        print(f"   ✅ Synchronized {synced_count} strategies successfully.")
+    print("----------------------------------------\n")
+
 # --- CORE LOGIC ---
 def run_pnl_refresh():
     msg_start = "🔄 Starting Zero-History State-Based P&L Refresh..."
     print(msg_start)
     report_progress("running", msg_start)
     
-    # 1. Fetch Active Strategies
+    # Run the status synchronizer before any math begins
+    sync_strategy_statuses()
+    
+    # 1. Fetch Active Strategies (Only active ones get daily math updates)
     strategies_res = supabase.table("strategies").select("strategy_id, strategy_name, strategy_full_name, strategy_grouping, capital, index_name, deployment_type, user_name, status").eq("status", "Active").execute()
     active_strategies = {str(s['strategy_id']): s for s in strategies_res.data}
     active_ids_int = [int(sid) for sid in active_strategies.keys()]
