@@ -25,7 +25,6 @@ def get_latest_processed_date():
 
 def get_active_strategies():
     """Fetches active strategies and returns them as a lookup dictionary."""
-    # FIXED: Table name is now strictly lowercase 'strategies'
     response = supabase.table("strategies") \
                        .select("strategy_id, strategy_full_name, strategy_grouping, capital") \
                        .eq("status", "Active").execute()
@@ -58,7 +57,19 @@ def process_pnl_data():
         strat_info = active_strategies[strat_id_str]
         
         try:
-            pnl_array = json.loads(record['pnl_data'])
+            raw_pnl = record.get('pnl_data')
+            
+            if not raw_pnl:
+                continue
+                
+            # FIXED: Handle both native list (auto-parsed by Supabase) and raw JSON string
+            if isinstance(raw_pnl, list):
+                pnl_array = raw_pnl
+            elif isinstance(raw_pnl, str):
+                pnl_array = json.loads(raw_pnl)
+            else:
+                print(f"Skipping row ID {record.get('id')}: unexpected data type ({type(raw_pnl)})")
+                continue
             
             if not pnl_array:
                 continue
