@@ -79,39 +79,57 @@ def build_deployment_lookup(deploy_data):
         except Exception: pass
     return lookup
 
-# --- PRE-FLIGHT SYNC ---
-def sync_strategy_statuses():
-    """Ensures historical PNL rows reflect the current master strategy status."""
-    print("🔄 Running Pre-Flight Status Sync...")
+# --- PRE-FLIGHT METADATA SYNC ---
+def sync_strategy_metadata():
+    """Ensures historical PNL rows reflect the current master strategy status and name."""
+    print("🔄 Running Pre-Flight Metadata Sync...")
     
-    # 1. Fetch Master Statuses
-    master_res = supabase.table("strategies").select("strategy_id, strategy_name, status").execute()
+    # 1. Fetch Master Metadata
+    master_res = supabase.table("strategies").select("strategy_id, strategy_name, strategy_full_name, status").execute()
     if not master_res.data:
         print("   - No strategies found to sync.")
         return
         
-    master_statuses = {int(s['strategy_id']): {'status': s['status'], 'name': s['strategy_name']} for s in master_res.data}
-    synced_count = 0
+    master_meta = {
+        int(s['strategy_id']): {
+            'status': s['status'], 
+            'name': s.get('strategy_full_name') or s.get('strategy_name') or f"ID {s['strategy_id']}"
+        } 
+        for s in master_res.data
+    }
     
-    # 2. Targeted .neq() Updates
-    for sid, meta in master_statuses.items():
+    synced_status_count = 0
+    synced_name_count = 0
+    
+    # 2. Targeted Independent Updates (Safe from comma crashes)
+    for sid, meta in master_meta.items():
         correct_status = meta['status']
-        strat_name = meta['name']
+        correct_name = meta['name']
+        
+        # Action A: Sync Status
         try:
-            # Only updates rows where the status doesn't match the master status
-            res = supabase.table("daily_strategy_pnl").update({"status": correct_status}) \
-                          .eq("strategy_id", sid).neq("status", correct_status).execute()
-            
-            if res.data:
-                print(f"   -> [STATUS SYNC] ID {sid} ({strat_name}) updated to '{correct_status}'. ({len(res.data)} historical rows aligned)")
-                synced_count += 1
+            res_status = supabase.table("daily_strategy_pnl").update({"status": correct_status}) \
+                                 .eq("strategy_id", sid).neq("status", correct_status).execute()
+            if res_status.data:
+                print(f"   -> [STATUS SYNC] ID {sid} updated to '{correct_status}'. ({len(res_status.data)} rows aligned)")
+                synced_status_count += 1
         except Exception as e:
             print(f"   -> [ERROR] Failed to sync status for ID {sid}: {e}")
+
+        # Action B: Sync Name
+        try:
+            res_name = supabase.table("daily_strategy_pnl").update({"strategy_name": correct_name}) \
+                               .eq("strategy_id", sid).neq("strategy_name", correct_name).execute()
+            if res_name.data:
+                print(f"   -> [NAME SYNC] ID {sid} updated to '{correct_name}'. ({len(res_name.data)} rows aligned)")
+                synced_name_count += 1
+        except Exception as e:
+            print(f"   -> [ERROR] Failed to sync name for ID {sid}: {e}")
             
-    if synced_count == 0:
-        print("   ✅ All historical statuses are perfectly aligned.")
+    if synced_status_count == 0 and synced_name_count == 0:
+        print("   ✅ All historical metadata (Names & Statuses) is perfectly aligned.")
     else:
-        print(f"   ✅ Synchronized {synced_count} strategies successfully.")
+        print(f"   ✅ Synchronized {synced_status_count} statuses and {synced_name_count} names successfully.")
     print("----------------------------------------\n")
 
 # --- CORE LOGIC ---
@@ -120,8 +138,8 @@ def run_pnl_refresh():
     print(msg_start)
     report_progress("running", msg_start)
     
-    # Run the status synchronizer before any math begins
-    sync_strategy_statuses()
+    # Run the metadata synchronizer before any math begins
+    sync_strategy_metadata()
     
     # 1. Fetch Active Strategies (Only active ones get daily math updates)
     strategies_res = supabase.table("strategies").select("strategy_id, strategy_name, strategy_full_name, strategy_grouping, capital, index_name, deployment_type, user_name, status").eq("status", "Active").execute()
