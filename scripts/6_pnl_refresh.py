@@ -29,7 +29,6 @@ def report_progress(status, msg):
             "last_msg": msg,
             "updated_at": datetime.now(timezone.utc).isoformat()
         }).eq("step_id", "step6").execute()
-        print(msg)
     except Exception as e:
         print(f"⚠️ Heartbeat update failed: {e}")
 
@@ -83,18 +82,24 @@ def get_latest_date_for_strategy(strategy_id):
 
 # --- CORE LOGIC ---
 def run_pnl_refresh():
-    report_progress("running", "🔄 Starting Unified P&L Refresh...")
+    msg_start = "🔄 Starting Unified P&L Refresh..."
+    print(msg_start)
+    report_progress("running", msg_start)
     
     # 1. Fetch Active Strategies (Live Auto & Live Offline)
     strategies_res = supabase.table("strategies").select("strategy_id, strategy_name, strategy_full_name, strategy_grouping, capital, index_name, deployment_type, user_name, status").eq("status", "Active").execute()
     active_strategies = {str(s['strategy_id']): s for s in strategies_res.data}
     
     if not active_strategies:
-        report_progress("success", "✅ No active strategies found.")
+        msg_none = "✅ No active strategies found."
+        print(msg_none)
+        report_progress("success", msg_none)
         return
 
     # 2. Upfront Memory Load
-    report_progress("running", "📦 Loading historical lots and multipliers into memory...")
+    msg_mem = "📦 Loading historical lots and multipliers into memory..."
+    print(msg_mem)
+    report_progress("running", msg_mem)
     lot_lookup = build_lot_size_lookup(fetch_all_paginated("lot_sizes"))
     deploy_lookup = build_deployment_lookup(fetch_all_paginated("live_deployments"))
     
@@ -108,8 +113,15 @@ def run_pnl_refresh():
     raw_new_trades = []
     skipped_records = 0
     total_fetched = 0
+    
+    # Tracking metrics for logging
+    processed_dates = set()
+    processed_strategies = set()
 
-    report_progress("running", f"🔎 Fetching incremental intraday data for {len(active_strategies)} strategies...")
+    msg_fetch = f"🔎 Fetching incremental intraday data for {len(active_strategies)} strategies...\n"
+    print(msg_fetch)
+    report_progress("running", msg_fetch)
+    print("--- Starting Row Processing ---")
 
     # 3. Strategy-Level Incremental Fetch & Parse
     for strat_id_str, strat_meta in active_strategies.items():
@@ -127,14 +139,27 @@ def run_pnl_refresh():
             if len(chunk) < fetch_limit: break
             fetch_start += fetch_limit
 
+        if not strategy_records:
+            print(f"[INFO] No new data pending for: {strat_name} (Latest: {latest_date})")
+            continue
+
         total_fetched += len(strategy_records)
 
         for row in strategy_records:
             t_date_str = row.get('trade_date', 'Unknown')
             try:
                 raw_pnl = row.get('pnl_data')
+                
+                if not raw_pnl:
+                    print(f"[SKIP] No PNL data for: {strat_name} on {t_date_str}")
+                    skipped_records += 1
+                    continue
+                    
                 pnl_json = raw_pnl if isinstance(raw_pnl, list) else json.loads(raw_pnl)
-                if not pnl_json: continue
+                if not pnl_json:
+                    print(f"[SKIP] Empty PNL array for: {strat_name} on {t_date_str}")
+                    skipped_records += 1
+                    continue
                 
                 daily_final_pnl = pnl_json[-1]['pnl']
                 max_profit_obj = max(pnl_json, key=lambda x: x['pnl'])
@@ -150,7 +175,8 @@ def run_pnl_refresh():
                 if multiplier_key in deploy_lookup:
                     multiplier = deploy_lookup[multiplier_key]
                 elif deploy_type == 'Live Auto':
-                    error_msg = f"❌ FATAL ERROR: Live Auto ID {strat_id_str} missing multiplier for {target_month_iso}."
+                    error_msg = f"❌ FATAL ERROR: Live Auto ID {strat_id_str} ({strat_name}) missing multiplier for {target_month_iso}."
+                    print(error_msg)
                     report_progress("error", error_msg)
                     raise KeyError(error_msg)
                 else:
@@ -185,16 +211,37 @@ def run_pnl_refresh():
                     "pnl_percent": pnl_pct,
                     "updated_at": datetime.now(timezone.utc).isoformat()
                 })
-            except Exception:
+                
+                processed_dates.add(t_date_str)
+                processed_strategies.add(strat_name)
+                print(f"[SUCCESS] Prepared data for: {strat_name} on {t_date_str} (Cap: {round(eff_cap, 2)}, Mult: {multiplier}, Type: {deploy_type})")
+
+            except Exception as e:
+                if "FATAL ERROR" in str(e):
+                    raise
+                print(f"[ERROR] Failed to process {strat_name} on {t_date_str}: {str(e)[:50]}")
                 skipped_records += 1
                 continue
 
+    print("\n--- Processing Summary ---")
+    print(f"Total raw records fetched: {total_fetched}")
+    print(f"Total records successfully prepared: {len(raw_new_trades)}")
+    print(f"Unique dates processed: {len(processed_dates)}")
+    print(f"Unique strategies processed: {len(processed_strategies)}")
+    print(f"Records skipped/failed: {skipped_records}")
+    print("--------------------------\n")
+
     if not raw_new_trades:
-        report_progress("success", "✅ Already up to date. No new records to process.")
+        msg_done = "✅ Already up to date. No new records to process."
+        print(msg_done)
+        report_progress("success", msg_done)
         return
 
     # 4. Cumulative Pandas Math
-    report_progress("running", f"🧮 Computing cumulative metrics for {len(raw_new_trades)} new trades...")
+    msg_calc = f"🧮 Computing cumulative metrics for {len(raw_new_trades)} new trades..."
+    print(msg_calc)
+    report_progress("running", msg_calc)
+    
     df_new = pd.DataFrame(raw_new_trades)
     
     # We only need existing data for the strategies we are actively updating
@@ -203,9 +250,8 @@ def run_pnl_refresh():
     
     # Fetch existing data for these specific strategies to continue the cumulative sum
     for sid in updated_sids:
-        existing_data.extend(fetch_all_paginated("daily_strategy_pnl", f"*").loc[lambda x: True] if False else supabase.table("daily_strategy_pnl").select("*").eq("strategy_id", sid).execute().data) # Optimized query
+        existing_data.extend(fetch_all_paginated("daily_strategy_pnl", f"*").loc[lambda x: True] if False else supabase.table("daily_strategy_pnl").select("*").eq("strategy_id", sid).execute().data)
 
-    # Correct fetch for existing data
     df_ui_existing = pd.DataFrame(existing_data) if existing_data else pd.DataFrame()
     df_work = pd.concat([df_ui_existing, df_new], ignore_index=True)
     
@@ -228,15 +274,23 @@ def run_pnl_refresh():
             final_payload.append(row_dict)
 
     # 5. Bulk Upsert
-    report_progress("running", f"📤 Upserting {len(final_payload)} rows to daily_strategy_pnl...")
+    msg_push = f"📤 Upserting {len(final_payload)} rows to daily_strategy_pnl..."
+    print(msg_push)
+    report_progress("running", msg_push)
+    
     for i in range(0, len(final_payload), 500):
         supabase.table("daily_strategy_pnl").upsert(final_payload[i:i+500]).execute()
+        print(f"Inserted batch {i // 500 + 1} ({len(final_payload[i:i+500])} records)...")
     
-    report_progress("success", f"✅ Successfully processed {total_fetched} raw records and updated {len(final_payload)} daily trades.")
+    msg_final = f"✅ Successfully processed {total_fetched} raw records and updated {len(final_payload)} daily trades."
+    print(msg_final)
+    report_progress("success", msg_final)
 
 if __name__ == "__main__":
     try:
         run_pnl_refresh()
     except Exception as e:
-        report_progress("error", f"❌ Step 6 Failed: {str(e)[:50]}")
+        msg_err = f"❌ Step 6 Failed: {str(e)[:50]}"
+        print(msg_err)
+        report_progress("error", msg_err)
         raise e
