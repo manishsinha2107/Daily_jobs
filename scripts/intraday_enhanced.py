@@ -25,7 +25,8 @@ def get_latest_processed_date():
 
 def get_active_strategies():
     """Fetches active strategies and returns them as a lookup dictionary."""
-    response = supabase.table("Strategies") \
+    # FIXED: Table name is now strictly lowercase 'strategies'
+    response = supabase.table("strategies") \
                        .select("strategy_id, strategy_full_name, strategy_grouping, capital") \
                        .eq("status", "Active").execute()
     
