@@ -25,7 +25,6 @@ def get_latest_processed_date():
 
 def get_active_strategies():
     """Fetches active strategies and returns them as a lookup dictionary."""
-    # FIXED: Now pulling strategy_name as well for the fallback logic
     response = supabase.table("strategies") \
                        .select("strategy_id, strategy_name, strategy_full_name, strategy_grouping, capital") \
                        .eq("status", "Active").execute()
@@ -36,11 +35,30 @@ def process_pnl_data():
     latest_date = get_latest_processed_date()
     print(f"Latest processed date: {latest_date}. Fetching newer records...\n")
 
-    source_response = supabase.table("intraday_pnl_1min_closing") \
-                              .select("*") \
-                              .gt("trade_date", latest_date).execute()
+    # FIXED: Pagination Loop to bypass the 1,000 row API limit
+    new_records = []
+    fetch_start = 0
+    fetch_limit = 1000
     
-    new_records = source_response.data
+    while True:
+        fetch_end = fetch_start + fetch_limit - 1
+        source_response = supabase.table("intraday_pnl_1min_closing") \
+                                  .select("*") \
+                                  .gt("trade_date", latest_date) \
+                                  .range(fetch_start, fetch_end) \
+                                  .execute()
+        
+        chunk = source_response.data
+        if not chunk:
+            break
+            
+        new_records.extend(chunk)
+        
+        # If we received fewer rows than the limit, we've reached the end of the table
+        if len(chunk) < fetch_limit:
+            break
+            
+        fetch_start += fetch_limit
 
     if not new_records:
         print("No new records to process.")
@@ -65,7 +83,6 @@ def process_pnl_data():
             
         strat_info = active_strategies[strat_id_str]
         
-        # FIXED: Bulletproof naming fallback logic
         strat_full_name = strat_info.get('strategy_full_name')
         strat_name_basic = strat_info.get('strategy_name')
         
@@ -136,15 +153,23 @@ def process_pnl_data():
             skipped_records += 1
 
     print("\n--- Processing Summary ---")
-    print(f"Total records ready to push: {len(enhanced_data_to_insert)}")
+    print(f"Total raw records fetched: {len(new_records)}")
+    print(f"Total active strategy records ready to push: {len(enhanced_data_to_insert)}")
     print(f"Unique dates processed: {len(processed_dates)}")
     print(f"Unique strategies processed: {len(processed_strategies)} ({', '.join(sorted(processed_strategies)) if processed_strategies else 'None'})")
     print(f"Records skipped/failed: {skipped_records}")
     print("--------------------------\n")
 
     if enhanced_data_to_insert:
-        print(f"Inserting {len(enhanced_data_to_insert)} enhanced records into Supabase...")
-        supabase.table("intraday_pnl_enhanced_data").insert(enhanced_data_to_insert).execute()
+        print(f"Inserting {len(enhanced_data_to_insert)} enhanced records into Supabase in chunks...")
+        
+        # FIXED: Chunk the inserts to avoid payload limits
+        insert_chunk_size = 500
+        for i in range(0, len(enhanced_data_to_insert), insert_chunk_size):
+            batch = enhanced_data_to_insert[i:i + insert_chunk_size]
+            supabase.table("intraday_pnl_enhanced_data").insert(batch).execute()
+            print(f"Inserted batch {i // insert_chunk_size + 1} ({len(batch)} records)...")
+            
         print("Insertion successfully completed.")
     else:
         print("No valid active strategy records found to insert.")
