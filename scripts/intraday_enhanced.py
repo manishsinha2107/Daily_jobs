@@ -33,7 +33,7 @@ def get_active_strategies():
 
 def process_pnl_data():
     latest_date = get_latest_processed_date()
-    print(f"Latest processed date: {latest_date}. Fetching newer records...")
+    print(f"Latest processed date: {latest_date}. Fetching newer records...\n")
 
     source_response = supabase.table("intraday_pnl_1min_closing") \
                               .select("*") \
@@ -47,31 +47,44 @@ def process_pnl_data():
 
     active_strategies = get_active_strategies()
     enhanced_data_to_insert = []
+    
+    # Tracking metrics for the final summary
+    processed_dates = set()
+    processed_strategies = set()
+    skipped_records = 0
+
+    print("--- Starting Row Processing ---")
 
     for record in new_records:
         strat_id_str = str(record['strategy_id'])
+        trade_date = record.get('trade_date', 'Unknown Date')
         
         if strat_id_str not in active_strategies:
             continue
             
         strat_info = active_strategies[strat_id_str]
+        strat_name = strat_info.get('strategy_full_name', f'Strategy ID {strat_id_str}')
         
         try:
             raw_pnl = record.get('pnl_data')
             
             if not raw_pnl:
+                print(f"[SKIP] No PNL data for: {strat_name} on {trade_date}")
+                skipped_records += 1
                 continue
                 
-            # FIXED: Handle both native list (auto-parsed by Supabase) and raw JSON string
             if isinstance(raw_pnl, list):
                 pnl_array = raw_pnl
             elif isinstance(raw_pnl, str):
                 pnl_array = json.loads(raw_pnl)
             else:
-                print(f"Skipping row ID {record.get('id')}: unexpected data type ({type(raw_pnl)})")
+                print(f"[ERROR] Unexpected data type for: {strat_name} on {trade_date}")
+                skipped_records += 1
                 continue
             
             if not pnl_array:
+                print(f"[SKIP] Empty PNL array for: {strat_name} on {trade_date}")
+                skipped_records += 1
                 continue
             
             daily_final_pnl = pnl_array[-1]['pnl']
@@ -86,10 +99,10 @@ def process_pnl_data():
 
             enhanced_row = {
                 "strategy_id": record['strategy_id'],
-                "strategy_full_name": strat_info.get('strategy_full_name'),
+                "strategy_full_name": strat_name,
                 "strategy_grouping": strat_info.get('strategy_grouping'),
                 "capital": strat_info.get('capital'),
-                "trade_date": record['trade_date'],
+                "trade_date": trade_date,
                 "daily_final_pnl": daily_final_pnl,
                 "max_profit": max_profit,
                 "max_profit_time": max_profit_time,
@@ -99,16 +112,29 @@ def process_pnl_data():
             }
             
             enhanced_data_to_insert.append(enhanced_row)
+            processed_dates.add(trade_date)
+            processed_strategies.add(strat_name)
+            
+            print(f"[SUCCESS] Prepared data for: {strat_name} on {trade_date}")
         
         except json.JSONDecodeError:
-            print(f"Error parsing JSON for row ID {record.get('id')}")
+            print(f"[ERROR] Failed to parse JSON for: {strat_name} on {trade_date}")
+            skipped_records += 1
         except KeyError as e:
-            print(f"Missing expected JSON key {e} in row ID {record.get('id')}")
+            print(f"[ERROR] Missing expected key {e} for: {strat_name} on {trade_date}")
+            skipped_records += 1
+
+    print("\n--- Processing Summary ---")
+    print(f"Total records ready to push: {len(enhanced_data_to_insert)}")
+    print(f"Unique dates processed: {len(processed_dates)} ({', '.join(sorted(processed_dates)) if processed_dates else 'None'})")
+    print(f"Unique strategies processed: {len(processed_strategies)}")
+    print(f"Records skipped/failed: {skipped_records}")
+    print("--------------------------\n")
 
     if enhanced_data_to_insert:
-        print(f"Inserting {len(enhanced_data_to_insert)} enhanced records...")
+        print(f"Inserting {len(enhanced_data_to_insert)} enhanced records into Supabase...")
         supabase.table("intraday_pnl_enhanced_data").insert(enhanced_data_to_insert).execute()
-        print("Insertion complete.")
+        print("Insertion successfully completed.")
     else:
         print("No valid active strategy records found to insert.")
 
