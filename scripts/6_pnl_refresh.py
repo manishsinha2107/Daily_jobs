@@ -1,7 +1,5 @@
 import os
 import json
-import pandas as pd
-import numpy as np
 from datetime import datetime, timezone
 try:
     from dotenv import load_dotenv
@@ -34,7 +32,6 @@ def report_progress(status, msg):
 
 # --- DATA FETCHERS & LOOKUPS ---
 def fetch_all_paginated(table_name, select_query="*"):
-    """Fetches entire tables dynamically bypassing the 1,000 row API limit."""
     all_data = []
     offset, limit = 0, 1000
     while True:
@@ -74,21 +71,16 @@ def build_deployment_lookup(deploy_data):
         except Exception: pass
     return lookup
 
-def get_latest_date_for_strategy(strategy_id):
-    """Fetches the maximum date already processed in daily_strategy_pnl."""
-    response = supabase.table("daily_strategy_pnl").select("trade_date").eq("strategy_id", int(strategy_id)).order("trade_date", desc=True).limit(1).execute()
-    if response.data: return response.data[0]['trade_date']
-    return "2000-01-01" 
-
 # --- CORE LOGIC ---
 def run_pnl_refresh():
-    msg_start = "🔄 Starting Strategy-Level P&L Refresh..."
+    msg_start = "🔄 Starting Zero-History State-Based P&L Refresh..."
     print(msg_start)
     report_progress("running", msg_start)
     
     # 1. Fetch Active Strategies
     strategies_res = supabase.table("strategies").select("strategy_id, strategy_name, strategy_full_name, strategy_grouping, capital, index_name, deployment_type, user_name, status").eq("status", "Active").execute()
     active_strategies = {str(s['strategy_id']): s for s in strategies_res.data}
+    active_ids_int = [int(sid) for sid in active_strategies.keys()]
     
     if not active_strategies:
         msg_none = "✅ No active strategies found."
@@ -96,10 +88,8 @@ def run_pnl_refresh():
         report_progress("success", msg_none)
         return
 
-    # 2. Upfront Memory Load
-    msg_mem = "📦 Loading historical lots and multipliers into memory..."
-    print(msg_mem)
-    report_progress("running", msg_mem)
+    # 2. Bulk Memory Load (Lookups)
+    print("📦 Fetching lot sizes and deployments...")
     lot_lookup = build_lot_size_lookup(fetch_all_paginated("lot_sizes"))
     deploy_lookup = build_deployment_lookup(fetch_all_paginated("live_deployments"))
     
@@ -109,43 +99,74 @@ def run_pnl_refresh():
         curr_lot = get_historical_lot_size(lot_lookup, strat.get('index_name'), today_str)
         unit_cap_map[sid] = float(strat.get('capital', 0)) / curr_lot if curr_lot else 0
 
+    # 3. State Extraction (1 Fast Query per Strategy)
+    print(f"📦 Fetching latest state for {len(active_ids_int)} active strategies...")
+    strategy_states = {}
+    for sid in active_strategies.keys():
+        res = supabase.table("daily_strategy_pnl").select("trade_date, cumulative_pnl, peak_cumulative_pnl").eq("strategy_id", int(sid)).order("trade_date", desc=True).limit(1).execute()
+        if res.data:
+            row = res.data[0]
+            strategy_states[sid] = {
+                'latest_date': row['trade_date'],
+                'cum_pnl': float(row.get('cumulative_pnl') or 0.0),
+                'peak_pnl': float(row.get('peak_cumulative_pnl') or 0.0)
+            }
+        else:
+            strategy_states[sid] = {
+                'latest_date': '2000-01-01',
+                'cum_pnl': 0.0,
+                'peak_pnl': 0.0
+            }
+            
+    global_min_date = min([state['latest_date'] for state in strategy_states.values()])
+
+    # 4. Bulk Intraday Fetch (Only fetching data newer than the furthest behind strategy)
+    print(f"🔎 Bulk fetching new intraday data since {global_min_date}...")
+    new_intraday_data = []
+    offset, limit = 0, 1000
+    while True:
+        res = supabase.table("intraday_pnl_1min_closing").select("*").in_("strategy_id", active_ids_int).gt("trade_date", global_min_date).range(offset, offset + limit - 1).execute()
+        chunk = res.data
+        if not chunk: break
+        new_intraday_data.extend(chunk)
+        if len(chunk) < limit: break
+        offset += limit
+
+    # Group new intraday data by strategy in memory
+    intraday_grouped = {sid: [] for sid in active_strategies.keys()}
+    for row in new_intraday_data:
+        sid_str = str(row['strategy_id'])
+        if sid_str in intraday_grouped:
+            intraday_grouped[sid_str].append(row)
+
     # Global tracking for final summary
-    total_fetched = 0
     total_upserted = 0
     skipped_records = 0
     processed_strategies = set()
     processed_dates = set()
 
-    msg_fetch = f"🔎 Processing {len(active_strategies)} active strategies (Fetch -> Math -> Upsert)...\n"
-    print(msg_fetch)
-    report_progress("running", msg_fetch)
-    print("--- Starting Strategy Processing ---")
+    print("\n--- Starting Assembly Line Processing ---")
 
-    # 3. Strategy-Level Pipeline
+    # 5. Assembly Line Processing (Per Strategy)
     for strat_id_str, strat_meta in active_strategies.items():
         strat_name = strat_meta.get('strategy_full_name') or strat_meta.get('strategy_name') or f"ID {strat_id_str}"
-        latest_date = get_latest_date_for_strategy(strat_id_str)
+        strat_state = strategy_states[strat_id_str]
         
-        # A. Fetch new intraday records for this specific strategy
-        fetch_start, fetch_limit = 0, 1000
-        strategy_records = []
+        # A. Filter and SORT raw records specifically for this strategy
+        strategy_records = [row for row in intraday_grouped[strat_id_str] if row['trade_date'] > strat_state['latest_date']]
+        strategy_records.sort(key=lambda x: x['trade_date']) # CRITICAL: Sort chronologically for math
         
-        while True:
-            res = supabase.table("intraday_pnl_1min_closing").select("*").eq("strategy_id", int(strat_id_str)).gt("trade_date", latest_date).range(fetch_start, fetch_start + fetch_limit - 1).execute()
-            chunk = res.data
-            if not chunk: break
-            strategy_records.extend(chunk)
-            if len(chunk) < fetch_limit: break
-            fetch_start += fetch_limit
-
         if not strategy_records:
-            print(f"[INFO] No new data for: {strat_name} (Latest: {latest_date})")
+            print(f"[INFO] No new data for: {strat_name} (Latest: {strat_state['latest_date']})")
             continue
 
-        total_fetched += len(strategy_records)
-        raw_new_trades = []
+        processed_strategies.add(strat_name)
+        
+        running_cum_pnl = strat_state['cum_pnl']
+        running_peak = strat_state['peak_pnl']
+        final_payload = []
 
-        # B. Parse and prepare new trades
+        # B. Parse, Calculate Math, and Prepare New Trades
         for row in strategy_records:
             t_date_str = row.get('trade_date', 'Unknown')
             try:
@@ -161,9 +182,9 @@ def run_pnl_refresh():
                     skipped_records += 1
                     continue
                 
-                daily_final_pnl = pnl_json[-1]['pnl']
-                max_profit_obj = max(pnl_json, key=lambda x: x['pnl'])
-                max_loss_obj = min(pnl_json, key=lambda x: x['pnl'])
+                daily_final_pnl = float(pnl_json[-1]['pnl'])
+                max_profit_obj = max(pnl_json, key=lambda x: float(x['pnl']))
+                max_loss_obj = min(pnl_json, key=lambda x: float(x['pnl']))
                 
                 t_date_obj = datetime.strptime(t_date_str, "%Y-%m-%d")
                 target_month_iso = t_date_obj.replace(day=1).strftime("%Y-%m-%d")
@@ -177,7 +198,7 @@ def run_pnl_refresh():
                     error_msg = f"❌ FATAL ERROR: Live Auto ID {strat_id_str} ({strat_name}) missing multiplier for {target_month_iso}."
                     print(error_msg)
                     report_progress("error", error_msg)
-                    raise KeyError(error_msg) # Intentionally crashes script; previous strats are safe
+                    raise KeyError(error_msg) 
                 else:
                     multiplier = 1
                 
@@ -185,7 +206,13 @@ def run_pnl_refresh():
                 eff_cap = unit_cap_map.get(strat_id_str, 0) * hist_lot * multiplier
                 pnl_pct = round((daily_final_pnl / eff_cap * 100), 4) if eff_cap > 0 else 0.0
                 
-                raw_new_trades.append({
+                # Dynamic Cumulative Math
+                running_cum_pnl += daily_final_pnl
+                if running_cum_pnl > running_peak:
+                    running_peak = running_cum_pnl
+                max_dd_amount = running_peak - running_cum_pnl
+                
+                final_payload.append({
                     "trade_date": t_date_str,
                     "trade_year": t_date_obj.year,
                     "trade_month": t_date_obj.month,
@@ -207,6 +234,9 @@ def run_pnl_refresh():
                     "multiplier": int(multiplier),
                     "is_win": 1 if daily_final_pnl > 0 else 0,
                     "pnl_percent": pnl_pct,
+                    "cumulative_pnl": round(running_cum_pnl, 2),
+                    "peak_cumulative_pnl": round(running_peak, 2),
+                    "max_dd_amount": round(max_dd_amount, 2),
                     "updated_at": datetime.now(timezone.utc).isoformat()
                 })
                 
@@ -219,48 +249,15 @@ def run_pnl_refresh():
                 skipped_records += 1
                 continue
 
-        if not raw_new_trades:
+        if not final_payload:
             continue
 
-        processed_strategies.add(strat_name)
-
-        # C. Fetch existing history for this specific strategy
-        existing_data = []
-        offset, limit = 0, 1000
-        while True:
-            res = supabase.table("daily_strategy_pnl").select("*").eq("strategy_id", int(strat_id_str)).range(offset, offset + limit - 1).execute()
-            chunk = res.data
-            if not chunk: break
-            existing_data.extend(chunk)
-            if len(chunk) < limit: break
-            offset += limit
-
-        # D. Cumulative Pandas Math for this specific strategy
-        df_ui_existing = pd.DataFrame(existing_data) if existing_data else pd.DataFrame()
-        df_new = pd.DataFrame(raw_new_trades)
-        df_work = pd.concat([df_ui_existing, df_new], ignore_index=True)
-        
-        df_work = df_work.sort_values('trade_date')
-        df_work['cumulative_pnl'] = df_work['pnl'].cumsum()
-        df_work['peak_cumulative_pnl'] = df_work['cumulative_pnl'].cummax()
-        df_work['max_dd_amount'] = df_work['peak_cumulative_pnl'] - df_work['cumulative_pnl']
-        
-        # Isolate only the new records to upsert
-        new_dates = df_new['trade_date'].tolist()
-        strat_new_only = df_work[df_work['trade_date'].isin(new_dates)]
-        
-        final_payload = []
-        for _, r in strat_new_only.iterrows():
-            row_dict = r.replace({np.nan: None}).to_dict()
-            row_dict.pop('id', None) 
-            final_payload.append(row_dict)
-
-        # E. Immediate Upsert for this specific strategy
+        # C. Immediate Upsert for this specific strategy
         try:
             for i in range(0, len(final_payload), 500):
                 supabase.table("daily_strategy_pnl").upsert(final_payload[i:i+500]).execute()
             
-            print(f"[SUCCESS] Upserted {len(final_payload)} rows for {strat_name}.")
+            print(f"[SUCCESS] Processed & Upserted {len(final_payload)} rows for {strat_name}.")
             total_upserted += len(final_payload)
         except Exception as e:
             error_msg = f"❌ UPSERT CRASH for {strat_name}: {str(e)[:100]}"
@@ -268,9 +265,9 @@ def run_pnl_refresh():
             report_progress("error", error_msg)
             raise e
 
-    # 4. Final Summary
+    # 6. Final Summary
     print("\n--- Processing Summary ---")
-    print(f"Total raw records fetched: {total_fetched}")
+    print(f"Total raw intraday records fetched: {len(new_intraday_data)}")
     print(f"Total records successfully upserted: {total_upserted}")
     print(f"Unique dates processed: {len(processed_dates)}")
     print(f"Unique strategies updated: {len(processed_strategies)}")
@@ -278,7 +275,7 @@ def run_pnl_refresh():
     print("--------------------------\n")
 
     if total_upserted > 0:
-        msg_final = f"✅ Successfully processed {total_fetched} raw records and upserted {total_upserted} daily trades."
+        msg_final = f"✅ Successfully upserted {total_upserted} daily trades."
         print(msg_final)
         report_progress("success", msg_final)
     else:
