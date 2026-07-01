@@ -25,8 +25,9 @@ def get_latest_processed_date():
 
 def get_active_strategies():
     """Fetches active strategies and returns them as a lookup dictionary."""
+    # FIXED: Now pulling strategy_name as well for the fallback logic
     response = supabase.table("strategies") \
-                       .select("strategy_id, strategy_full_name, strategy_grouping, capital") \
+                       .select("strategy_id, strategy_name, strategy_full_name, strategy_grouping, capital") \
                        .eq("status", "Active").execute()
     
     return {str(strat['strategy_id']): strat for strat in response.data}
@@ -63,7 +64,17 @@ def process_pnl_data():
             continue
             
         strat_info = active_strategies[strat_id_str]
-        strat_name = strat_info.get('strategy_full_name', f'Strategy ID {strat_id_str}')
+        
+        # FIXED: Bulletproof naming fallback logic
+        strat_full_name = strat_info.get('strategy_full_name')
+        strat_name_basic = strat_info.get('strategy_name')
+        
+        if strat_full_name and str(strat_full_name).strip():
+            strat_name = str(strat_full_name).strip()
+        elif strat_name_basic and str(strat_name_basic).strip():
+            strat_name = str(strat_name_basic).strip()
+        else:
+            strat_name = f"Strategy ID {strat_id_str}"
         
         try:
             raw_pnl = record.get('pnl_data')
@@ -126,8 +137,8 @@ def process_pnl_data():
 
     print("\n--- Processing Summary ---")
     print(f"Total records ready to push: {len(enhanced_data_to_insert)}")
-    print(f"Unique dates processed: {len(processed_dates)} ({', '.join(sorted(processed_dates)) if processed_dates else 'None'})")
-    print(f"Unique strategies processed: {len(processed_strategies)}")
+    print(f"Unique dates processed: {len(processed_dates)}")
+    print(f"Unique strategies processed: {len(processed_strategies)} ({', '.join(sorted(processed_strategies)) if processed_strategies else 'None'})")
     print(f"Records skipped/failed: {skipped_records}")
     print("--------------------------\n")
 
