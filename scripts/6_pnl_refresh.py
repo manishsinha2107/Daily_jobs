@@ -1,5 +1,6 @@
 import os
 import json
+import builtins
 import pandas as pd
 from datetime import datetime, timezone
 try:
@@ -10,6 +11,12 @@ except ImportError:
     pass
 
 from supabase import create_client, Client
+
+# --- FORCE UNBUFFERED LOGGING FOR GITHUB ACTIONS ---
+def print(*args, **kwargs):
+    """Overrides the default print function to instantly flush to the console."""
+    kwargs.setdefault('flush', True)
+    builtins.print(*args, **kwargs)
 
 # --- Configuration ---
 SUPABASE_URL = os.getenv("SUPABASE_URL")
@@ -78,26 +85,28 @@ def sync_strategy_statuses():
     print("🔄 Running Pre-Flight Status Sync...")
     
     # 1. Fetch Master Statuses
-    master_res = supabase.table("strategies").select("strategy_id, status").execute()
+    master_res = supabase.table("strategies").select("strategy_id, strategy_name, status").execute()
     if not master_res.data:
         print("   - No strategies found to sync.")
         return
         
-    master_statuses = {int(s['strategy_id']): s['status'] for s in master_res.data}
+    master_statuses = {int(s['strategy_id']): {'status': s['status'], 'name': s['strategy_name']} for s in master_res.data}
     synced_count = 0
     
     # 2. Targeted .neq() Updates
-    for sid, correct_status in master_statuses.items():
+    for sid, meta in master_statuses.items():
+        correct_status = meta['status']
+        strat_name = meta['name']
         try:
             # Only updates rows where the status doesn't match the master status
             res = supabase.table("daily_strategy_pnl").update({"status": correct_status}) \
                           .eq("strategy_id", sid).neq("status", correct_status).execute()
             
             if res.data:
-                print(f"   -> [SYNCED] Strategy ID {sid} updated to '{correct_status}' ({len(res.data)} rows fixed).")
+                print(f"   -> [STATUS SYNC] ID {sid} ({strat_name}) updated to '{correct_status}'. ({len(res.data)} historical rows aligned)")
                 synced_count += 1
         except Exception as e:
-            print(f"   -> [ERROR] Failed to sync ID {sid}: {e}")
+            print(f"   -> [ERROR] Failed to sync status for ID {sid}: {e}")
             
     if synced_count == 0:
         print("   ✅ All historical statuses are perfectly aligned.")
@@ -277,6 +286,8 @@ def run_pnl_refresh():
                     "updated_at": datetime.now(timezone.utc).isoformat()
                 })
                 
+                # REINSTATED DETAILED LOGGING
+                print(f"[SUCCESS] Prepared data for: {strat_name} on {t_date_str} (Cap: {round(eff_cap, 2)}, Mult: {multiplier}, Type: {deploy_type}, Status: {strat_meta['status']})")
                 processed_dates.add(t_date_str)
                 
             except Exception as e:
@@ -294,7 +305,7 @@ def run_pnl_refresh():
             for i in range(0, len(final_payload), 500):
                 supabase.table("daily_strategy_pnl").upsert(final_payload[i:i+500]).execute()
             
-            print(f"[SUCCESS] Processed & Upserted {len(final_payload)} rows for {strat_name}.")
+            print(f"[UPSERT SUCCESS] Pushed {len(final_payload)} rows to database for {strat_name}.\n")
             total_upserted += len(final_payload)
         except Exception as e:
             error_msg = f"❌ UPSERT CRASH for {strat_name}: {str(e)[:100]}"
