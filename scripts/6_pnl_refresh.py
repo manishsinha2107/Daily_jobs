@@ -123,7 +123,7 @@ def run_pnl_refresh():
 
         # Fetch exactly ONE row (the latest) for this strategy from the history table
         res = supabase.table("daily_strategy_pnl").select(
-            "trade_date, cumulative_pnl, peak_cumulative_pnl, base_capital, strategy_name, status, deployment_type, strategy_grouping, trades_types"
+            "trade_date, cumulative_pnl, peak_cumulative_pnl, base_capital, strategy_name, status, deployment_type, strategy_grouping, trades_type"
         ).eq("strategy_id", sid).order("trade_date", desc=True).limit(1).execute()
         
         latest_date = '2000-01-01'
@@ -146,7 +146,7 @@ def run_pnl_refresh():
                 if row.get('status') != master_status: update_payload['status'] = master_status
                 if row.get('deployment_type') != master_dep: update_payload['deployment_type'] = master_dep
                 if row.get('strategy_grouping') != master_grp: update_payload['strategy_grouping'] = master_grp
-                if row.get('trades_types') != master_tt: update_payload['trades_types'] = master_tt # Mapped to plural
+                if row.get('trades_type') != master_tt: update_payload['trades_type'] = master_tt # Mapped to plural
 
                 # Fire exactly ONE network call if there are multiple mismatches
                 if update_payload:
@@ -296,7 +296,7 @@ def run_pnl_refresh():
                     "strategy_grouping": strat_meta.get('strategy_grouping'),
                     "status": strat_meta['status'],
                     "deployment_type": deploy_type,
-                    "trades_types": strat_meta.get('trades_type'), # Mapped from singular
+                    "trades_type": strat_meta.get('trades_type'), # Mapped from singular
                     "base_capital": current_master_capital,
                     "pnl": round(daily_final_pnl, 2),
                     "max_profit": max_profit_obj['pnl'],
