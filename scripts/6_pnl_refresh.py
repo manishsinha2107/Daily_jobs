@@ -81,11 +81,11 @@ def build_deployment_lookup(deploy_data):
 
 # --- PRE-FLIGHT METADATA SYNC ---
 def sync_strategy_metadata():
-    """Ensures historical PNL rows reflect the current master strategy status and name."""
-    print("🔄 Running Pre-Flight Metadata Sync...")
+    """Ensures historical PNL rows reflect current master attributes."""
+    print("🔄 Running Expanded Pre-Flight Metadata Sync...")
     
-    # 1. Fetch Master Metadata
-    master_res = supabase.table("strategies").select("strategy_id, strategy_name, strategy_full_name, status").execute()
+    # 1. Fetch Expanded Master Metadata
+    master_res = supabase.table("strategies").select("strategy_id, strategy_name, strategy_full_name, status, deployment_type, strategy_grouping, trades_types").execute()
     if not master_res.data:
         print("   - No strategies found to sync.")
         return
@@ -93,43 +93,63 @@ def sync_strategy_metadata():
     master_meta = {
         int(s['strategy_id']): {
             'status': s['status'], 
-            'name': s.get('strategy_full_name') or s.get('strategy_name') or f"ID {s['strategy_id']}"
+            'name': s.get('strategy_full_name') or s.get('strategy_name') or f"ID {s['strategy_id']}",
+            'deployment_type': s.get('deployment_type'),
+            'strategy_grouping': s.get('strategy_grouping'),
+            'trades_types': s.get('trades_types')
         } 
         for s in master_res.data
     }
     
-    synced_status_count = 0
-    synced_name_count = 0
+    sync_counts = {'status': 0, 'name': 0, 'deployment': 0, 'grouping': 0, 'trades_types': 0}
     
-    # 2. Targeted Independent Updates (Safe from comma crashes)
+    # 2. Targeted Independent Updates
     for sid, meta in master_meta.items():
-        correct_status = meta['status']
-        correct_name = meta['name']
-        
-        # Action A: Sync Status
+        # Sync Status
         try:
-            res_status = supabase.table("daily_strategy_pnl").update({"status": correct_status}) \
-                                 .eq("strategy_id", sid).neq("status", correct_status).execute()
-            if res_status.data:
-                print(f"   -> [STATUS SYNC] ID {sid} updated to '{correct_status}'. ({len(res_status.data)} rows aligned)")
-                synced_status_count += 1
-        except Exception as e:
-            print(f"   -> [ERROR] Failed to sync status for ID {sid}: {e}")
+            res = supabase.table("daily_strategy_pnl").update({"status": meta['status']}).eq("strategy_id", sid).neq("status", meta['status']).execute()
+            if res.data:
+                print(f"   -> [STATUS] ID {sid} updated to '{meta['status']}'.")
+                sync_counts['status'] += 1
+        except Exception: pass
 
-        # Action B: Sync Name
+        # Sync Name
         try:
-            res_name = supabase.table("daily_strategy_pnl").update({"strategy_name": correct_name}) \
-                               .eq("strategy_id", sid).neq("strategy_name", correct_name).execute()
-            if res_name.data:
-                print(f"   -> [NAME SYNC] ID {sid} updated to '{correct_name}'. ({len(res_name.data)} rows aligned)")
-                synced_name_count += 1
-        except Exception as e:
-            print(f"   -> [ERROR] Failed to sync name for ID {sid}: {e}")
+            res = supabase.table("daily_strategy_pnl").update({"strategy_name": meta['name']}).eq("strategy_id", sid).neq("strategy_name", meta['name']).execute()
+            if res.data:
+                print(f"   -> [NAME] ID {sid} updated to '{meta['name']}'.")
+                sync_counts['name'] += 1
+        except Exception: pass
+        
+        # Sync Deployment Type
+        try:
+            res = supabase.table("daily_strategy_pnl").update({"deployment_type": meta['deployment_type']}).eq("strategy_id", sid).neq("deployment_type", meta['deployment_type']).execute()
+            if res.data:
+                print(f"   -> [DEPLOYMENT] ID {sid} updated to '{meta['deployment_type']}'.")
+                sync_counts['deployment'] += 1
+        except Exception: pass
+
+        # Sync Strategy Grouping
+        try:
+            res = supabase.table("daily_strategy_pnl").update({"strategy_grouping": meta['strategy_grouping']}).eq("strategy_id", sid).neq("strategy_grouping", meta['strategy_grouping']).execute()
+            if res.data:
+                print(f"   -> [GROUPING] ID {sid} updated to '{meta['strategy_grouping']}'.")
+                sync_counts['grouping'] += 1
+        except Exception: pass
+
+        # Sync Trades Types
+        try:
+            res = supabase.table("daily_strategy_pnl").update({"trades_types": meta['trades_types']}).eq("strategy_id", sid).neq("trades_types", meta['trades_types']).execute()
+            if res.data:
+                print(f"   -> [TRADES TYPE] ID {sid} updated to '{meta['trades_types']}'.")
+                sync_counts['trades_types'] += 1
+        except Exception: pass
             
-    if synced_status_count == 0 and synced_name_count == 0:
-        print("   ✅ All historical metadata (Names & Statuses) is perfectly aligned.")
+    total_synced = sum(sync_counts.values())
+    if total_synced == 0:
+        print("   ✅ All historical metadata is perfectly aligned.")
     else:
-        print(f"   ✅ Synchronized {synced_status_count} statuses and {synced_name_count} names successfully.")
+        print(f"   ✅ Synchronized {total_synced} metadata attributes successfully across database.")
     print("----------------------------------------\n")
 
 # --- CORE LOGIC ---
@@ -141,8 +161,8 @@ def run_pnl_refresh():
     # Run the metadata synchronizer before any math begins
     sync_strategy_metadata()
     
-    # 1. Fetch Active Strategies (Only active ones get daily math updates)
-    strategies_res = supabase.table("strategies").select("strategy_id, strategy_name, strategy_full_name, strategy_grouping, capital, index_name, deployment_type, user_name, status").eq("status", "Active").execute()
+    # 1. Fetch Active Strategies (Expanded to include trades_types)
+    strategies_res = supabase.table("strategies").select("strategy_id, strategy_name, strategy_full_name, strategy_grouping, capital, index_name, deployment_type, user_name, status, trades_types").eq("status", "Active").execute()
     active_strategies = {str(s['strategy_id']): s for s in strategies_res.data}
     active_ids_int = [int(sid) for sid in active_strategies.keys()]
     
@@ -163,18 +183,37 @@ def run_pnl_refresh():
         curr_lot = get_historical_lot_size(lot_lookup, strat.get('index_name'), today_str)
         unit_cap_map[sid] = float(strat.get('capital', 0)) / curr_lot if curr_lot else 0
 
-    # 3. State Extraction (1 Fast Query per Strategy)
-    print(f"📦 Fetching latest state for {len(active_ids_int)} active strategies...")
+    # 3. State Extraction & INTELLIGENT NUKE TRIGGER
+    print(f"📦 Fetching latest state & verifying capital integrity for {len(active_ids_int)} active strategies...")
     strategy_states = {}
     for sid in active_strategies.keys():
-        res = supabase.table("daily_strategy_pnl").select("trade_date, cumulative_pnl, peak_cumulative_pnl").eq("strategy_id", int(sid)).order("trade_date", desc=True).limit(1).execute()
+        current_master_capital = float(active_strategies[sid].get('capital') or 0.0)
+        
+        res = supabase.table("daily_strategy_pnl").select("trade_date, cumulative_pnl, peak_cumulative_pnl, base_capital").eq("strategy_id", int(sid)).order("trade_date", desc=True).limit(1).execute()
+        
         if res.data:
             row = res.data[0]
-            strategy_states[sid] = {
-                'latest_date': row['trade_date'],
-                'cum_pnl': float(row.get('cumulative_pnl') or 0.0),
-                'peak_pnl': float(row.get('peak_cumulative_pnl') or 0.0)
-            }
+            saved_base_capital = float(row.get('base_capital') or 0.0)
+            
+            # THE NUKE & REBUILD DETECTOR
+            if saved_base_capital != current_master_capital:
+                print(f"   ⚠️ CAPITAL MISMATCH for ID {sid} (Saved: {saved_base_capital} | Master: {current_master_capital}). Wiping historical data to force full recalculation.")
+                
+                # Delete all historical rows for this specific strategy
+                supabase.table("daily_strategy_pnl").delete().eq("strategy_id", int(sid)).execute()
+                
+                # Reset internal memory to treat as brand new
+                strategy_states[sid] = {
+                    'latest_date': '2000-01-01',
+                    'cum_pnl': 0.0,
+                    'peak_pnl': 0.0
+                }
+            else:
+                strategy_states[sid] = {
+                    'latest_date': row['trade_date'],
+                    'cum_pnl': float(row.get('cumulative_pnl') or 0.0),
+                    'peak_pnl': float(row.get('peak_cumulative_pnl') or 0.0)
+                }
         else:
             strategy_states[sid] = {
                 'latest_date': '2000-01-01',
@@ -229,6 +268,8 @@ def run_pnl_refresh():
         running_cum_pnl = strat_state['cum_pnl']
         running_peak = strat_state['peak_pnl']
         final_payload = []
+        
+        current_master_capital = float(strat_meta.get('capital', 0))
 
         # B. Parse, Calculate Math, and Prepare New Trades
         for row in strategy_records:
@@ -289,6 +330,8 @@ def run_pnl_refresh():
                     "strategy_grouping": strat_meta.get('strategy_grouping'),
                     "status": strat_meta['status'],
                     "deployment_type": deploy_type,
+                    "trades_types": strat_meta.get('trades_types'),
+                    "base_capital": current_master_capital,
                     "pnl": round(daily_final_pnl, 2),
                     "max_profit": max_profit_obj['pnl'],
                     "max_profit_time": max_profit_obj['time'],
