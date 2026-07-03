@@ -218,8 +218,16 @@ def run_pnl_refresh():
         strat_state = strategy_states[strat_id_str]
         
         # A. Filter and SORT raw records specifically for this strategy
-        strategy_records = [row for row in intraday_grouped[strat_id_str] if row['trade_date'] > strat_state['latest_date']]
-        strategy_records.sort(key=lambda x: x['trade_date']) 
+        raw_strategy_records = [row for row in intraday_grouped[strat_id_str] if row['trade_date'] > strat_state['latest_date']]
+        
+        # --- THE DEDUPLICATOR FIX ---
+        # Filter down to the final record for each specific date to prevent postgres conflict errors
+        deduped_records = {}
+        for row in raw_strategy_records:
+            deduped_records[row['trade_date']] = row
+        
+        strategy_records = list(deduped_records.values())
+        strategy_records.sort(key=lambda x: x['trade_date']) # CRITICAL: Sort chronologically for math
         
         if not strategy_records:
             print(f"[INFO] No new data for: {strat_name} (Latest: {strat_state['latest_date']})")
