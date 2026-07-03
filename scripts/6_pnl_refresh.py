@@ -85,7 +85,7 @@ def sync_strategy_metadata():
     print("🔄 Running Expanded Pre-Flight Metadata Sync...")
     
     # 1. Fetch Expanded Master Metadata
-    master_res = supabase.table("strategies").select("strategy_id, strategy_name, strategy_full_name, status, deployment_type, strategy_grouping, trades_types").execute()
+    master_res = supabase.table("strategies").select("strategy_id, strategy_name, strategy_full_name, status, deployment_type, strategy_grouping, trades_type").execute()
     if not master_res.data:
         print("   - No strategies found to sync.")
         return
@@ -96,12 +96,12 @@ def sync_strategy_metadata():
             'name': s.get('strategy_full_name') or s.get('strategy_name') or f"ID {s['strategy_id']}",
             'deployment_type': s.get('deployment_type'),
             'strategy_grouping': s.get('strategy_grouping'),
-            'trades_types': s.get('trades_types')
+            'trades_type': s.get('trades_type')
         } 
         for s in master_res.data
     }
     
-    sync_counts = {'status': 0, 'name': 0, 'deployment': 0, 'grouping': 0, 'trades_types': 0}
+    sync_counts = {'status': 0, 'name': 0, 'deployment': 0, 'grouping': 0, 'trades_type': 0}
     
     # 2. Targeted Independent Updates
     for sid, meta in master_meta.items():
@@ -139,10 +139,10 @@ def sync_strategy_metadata():
 
         # Sync Trades Types
         try:
-            res = supabase.table("daily_strategy_pnl").update({"trades_types": meta['trades_types']}).eq("strategy_id", sid).neq("trades_types", meta['trades_types']).execute()
+            res = supabase.table("daily_strategy_pnl").update({"trades_type": meta['trades_type']}).eq("strategy_id", sid).neq("trades_type", meta['trades_type']).execute()
             if res.data:
-                print(f"   -> [TRADES TYPE] ID {sid} updated to '{meta['trades_types']}'.")
-                sync_counts['trades_types'] += 1
+                print(f"   -> [TRADES TYPE] ID {sid} updated to '{meta['trades_type']}'.")
+                sync_counts['trades_type'] += 1
         except Exception: pass
             
     total_synced = sum(sync_counts.values())
@@ -161,8 +161,8 @@ def run_pnl_refresh():
     # Run the metadata synchronizer before any math begins
     sync_strategy_metadata()
     
-    # 1. Fetch Active Strategies (Expanded to include trades_types)
-    strategies_res = supabase.table("strategies").select("strategy_id, strategy_name, strategy_full_name, strategy_grouping, capital, index_name, deployment_type, user_name, status, trades_types").eq("status", "Active").execute()
+    # 1. Fetch Active Strategies (Expanded to include trades_type)
+    strategies_res = supabase.table("strategies").select("strategy_id, strategy_name, strategy_full_name, strategy_grouping, capital, index_name, deployment_type, user_name, status, trades_type").eq("status", "Active").execute()
     active_strategies = {str(s['strategy_id']): s for s in strategies_res.data}
     active_ids_int = [int(sid) for sid in active_strategies.keys()]
     
@@ -330,7 +330,7 @@ def run_pnl_refresh():
                     "strategy_grouping": strat_meta.get('strategy_grouping'),
                     "status": strat_meta['status'],
                     "deployment_type": deploy_type,
-                    "trades_types": strat_meta.get('trades_types'),
+                    "trades_type": strat_meta.get('trades_type'),
                     "base_capital": current_master_capital,
                     "pnl": round(daily_final_pnl, 2),
                     "max_profit": max_profit_obj['pnl'],
