@@ -79,100 +79,104 @@ def build_deployment_lookup(deploy_data):
         except Exception: pass
     return lookup
 
-# --- PRE-FLIGHT METADATA SYNC ---
-def sync_strategy_metadata():
-    """Ensures historical PNL rows reflect current master attributes."""
-    print("🔄 Running Expanded Pre-Flight Metadata Sync...")
-    
-    # 1. Fetch Expanded Master Metadata
-    master_res = supabase.table("strategies").select("strategy_id, strategy_name, strategy_full_name, status, deployment_type, strategy_grouping, trades_type").execute()
-    if not master_res.data:
-        print("   - No strategies found to sync.")
-        return
-        
-    master_meta = {
-        int(s['strategy_id']): {
-            'status': s['status'], 
-            'name': s.get('strategy_full_name') or s.get('strategy_name') or f"ID {s['strategy_id']}",
-            'deployment_type': s.get('deployment_type'),
-            'strategy_grouping': s.get('strategy_grouping'),
-            'trades_type': s.get('trades_type')
-        } 
-        for s in master_res.data
-    }
-    
-    sync_counts = {'status': 0, 'name': 0, 'deployment': 0, 'grouping': 0, 'trades_type': 0}
-    
-    # 2. Targeted Independent Updates
-    for sid, meta in master_meta.items():
-        # Sync Status
-        try:
-            res = supabase.table("daily_strategy_pnl").update({"status": meta['status']}).eq("strategy_id", sid).neq("status", meta['status']).execute()
-            if res.data:
-                print(f"   -> [STATUS] ID {sid} updated to '{meta['status']}'.")
-                sync_counts['status'] += 1
-        except Exception: pass
-
-        # Sync Name
-        try:
-            res = supabase.table("daily_strategy_pnl").update({"strategy_name": meta['name']}).eq("strategy_id", sid).neq("strategy_name", meta['name']).execute()
-            if res.data:
-                print(f"   -> [NAME] ID {sid} updated to '{meta['name']}'.")
-                sync_counts['name'] += 1
-        except Exception: pass
-        
-        # Sync Deployment Type
-        try:
-            res = supabase.table("daily_strategy_pnl").update({"deployment_type": meta['deployment_type']}).eq("strategy_id", sid).neq("deployment_type", meta['deployment_type']).execute()
-            if res.data:
-                print(f"   -> [DEPLOYMENT] ID {sid} updated to '{meta['deployment_type']}'.")
-                sync_counts['deployment'] += 1
-        except Exception: pass
-
-        # Sync Strategy Grouping
-        try:
-            res = supabase.table("daily_strategy_pnl").update({"strategy_grouping": meta['strategy_grouping']}).eq("strategy_id", sid).neq("strategy_grouping", meta['strategy_grouping']).execute()
-            if res.data:
-                print(f"   -> [GROUPING] ID {sid} updated to '{meta['strategy_grouping']}'.")
-                sync_counts['grouping'] += 1
-        except Exception: pass
-
-        # Sync Trades Types
-        try:
-            res = supabase.table("daily_strategy_pnl").update({"trades_type": meta['trades_type']}).eq("strategy_id", sid).neq("trades_type", meta['trades_type']).execute()
-            if res.data:
-                print(f"   -> [TRADES TYPE] ID {sid} updated to '{meta['trades_type']}'.")
-                sync_counts['trades_type'] += 1
-        except Exception: pass
-            
-    total_synced = sum(sync_counts.values())
-    if total_synced == 0:
-        print("   ✅ All historical metadata is perfectly aligned.")
-    else:
-        print(f"   ✅ Synchronized {total_synced} metadata attributes successfully across database.")
-    print("----------------------------------------\n")
 
 # --- CORE LOGIC ---
 def run_pnl_refresh():
-    msg_start = "🔄 Starting Zero-History State-Based P&L Refresh..."
+    msg_start = "🔄 Starting Highly Optimized P&L Engine (Unified State & Sync)..."
     print(msg_start)
     report_progress("running", msg_start)
     
-    # Run the metadata synchronizer before any math begins
-    sync_strategy_metadata()
+    # 1. THE UNIFIED MASTER FETCH
+    # We fetch ALL strategies once. We sync metadata for everything (active or archived) 
+    # so the UI matrix stays perfect, but we only calculate new PNL for active ones.
+    master_res = supabase.table("strategies").select(
+        "strategy_id, strategy_name, strategy_full_name, status, deployment_type, strategy_grouping, trades_type, capital, index_name, user_name"
+    ).execute()
     
-    # 1. Fetch Active Strategies (Expanded to include trades_type)
-    strategies_res = supabase.table("strategies").select("strategy_id, strategy_name, strategy_full_name, strategy_grouping, capital, index_name, deployment_type, user_name, status, trades_type").eq("status", "Active").execute()
-    active_strategies = {str(s['strategy_id']): s for s in strategies_res.data}
-    active_ids_int = [int(sid) for sid in active_strategies.keys()]
-    
-    if not active_strategies:
-        msg_none = "✅ No active strategies found."
+    if not master_res.data:
+        msg_none = "✅ No strategies found in master table."
         print(msg_none)
         report_progress("success", msg_none)
         return
 
-    # 2. Bulk Memory Load (Lookups)
+    # Tracking variables for the unified loop
+    strategy_states = {}
+    active_strategies = {}
+    active_ids_int = []
+    
+    sync_updates_made = 0
+    nukes_triggered = 0
+
+    print(f"📦 Verifying integrity and state for {len(master_res.data)} total strategies...")
+
+    # 2. THE ONE-TOUCH LOOP
+    for s in master_res.data:
+        sid = int(s['strategy_id'])
+        sid_str = str(sid)
+        
+        master_cap = float(s.get('capital') or 0.0)
+        master_name = s.get('strategy_full_name') or s.get('strategy_name') or f"ID {sid}"
+        master_status = s.get('status')
+        master_dep = s.get('deployment_type')
+        master_grp = s.get('strategy_grouping')
+        master_tt = s.get('trades_type') # Singular in master table
+
+        # Fetch exactly ONE row (the latest) for this strategy from the history table
+        res = supabase.table("daily_strategy_pnl").select(
+            "trade_date, cumulative_pnl, peak_cumulative_pnl, base_capital, strategy_name, status, deployment_type, strategy_grouping, trades_types"
+        ).eq("strategy_id", sid).order("trade_date", desc=True).limit(1).execute()
+        
+        latest_date = '2000-01-01'
+        cum_pnl = 0.0
+        peak_pnl = 0.0
+
+        if res.data:
+            row = res.data[0]
+            saved_cap = float(row.get('base_capital') or 0.0)
+            
+            # CHECK A: Capital Mismatch (The Nuke)
+            if saved_cap != master_cap:
+                print(f"   ⚠️ CAPITAL MISMATCH for ID {sid} (Saved: {saved_cap} | Master: {master_cap}). Wiping history.")
+                supabase.table("daily_strategy_pnl").delete().eq("strategy_id", sid).execute()
+                nukes_triggered += 1
+            else:
+                # CHECK B: Metadata Mismatch (The Targeted Sync)
+                update_payload = {}
+                if row.get('strategy_name') != master_name: update_payload['strategy_name'] = master_name
+                if row.get('status') != master_status: update_payload['status'] = master_status
+                if row.get('deployment_type') != master_dep: update_payload['deployment_type'] = master_dep
+                if row.get('strategy_grouping') != master_grp: update_payload['strategy_grouping'] = master_grp
+                if row.get('trades_types') != master_tt: update_payload['trades_types'] = master_tt # Mapped to plural
+
+                # Fire exactly ONE network call if there are multiple mismatches
+                if update_payload:
+                    supabase.table("daily_strategy_pnl").update(update_payload).eq("strategy_id", sid).execute()
+                    print(f"   🔄 Synced metadata for ID {sid}: {list(update_payload.keys())}")
+                    sync_updates_made += 1
+
+                latest_date = row['trade_date']
+                cum_pnl = float(row.get('cumulative_pnl') or 0.0)
+                peak_pnl = float(row.get('peak_cumulative_pnl') or 0.0)
+
+        # Only queue ACTIVE strategies for the heavy intraday math lifting
+        if master_status == 'Active':
+            strategy_states[sid_str] = {
+                'latest_date': latest_date,
+                'cum_pnl': cum_pnl,
+                'peak_pnl': peak_pnl
+            }
+            active_ids_int.append(sid)
+            active_strategies[sid_str] = s
+
+    print(f"✅ State extraction complete. Syncs: {sync_updates_made} | Rebuilds triggered: {nukes_triggered}\n")
+
+    if not active_strategies:
+        msg_none = "✅ Metadata synced, but no ACTIVE strategies require math updates today."
+        print(msg_none)
+        report_progress("success", msg_none)
+        return
+
+    # 3. Bulk Memory Load (Lookups)
     print("📦 Fetching lot sizes and deployments...")
     lot_lookup = build_lot_size_lookup(fetch_all_paginated("lot_sizes"))
     deploy_lookup = build_deployment_lookup(fetch_all_paginated("live_deployments"))
@@ -183,47 +187,9 @@ def run_pnl_refresh():
         curr_lot = get_historical_lot_size(lot_lookup, strat.get('index_name'), today_str)
         unit_cap_map[sid] = float(strat.get('capital', 0)) / curr_lot if curr_lot else 0
 
-    # 3. State Extraction & INTELLIGENT NUKE TRIGGER
-    print(f"📦 Fetching latest state & verifying capital integrity for {len(active_ids_int)} active strategies...")
-    strategy_states = {}
-    for sid in active_strategies.keys():
-        current_master_capital = float(active_strategies[sid].get('capital') or 0.0)
-        
-        res = supabase.table("daily_strategy_pnl").select("trade_date, cumulative_pnl, peak_cumulative_pnl, base_capital").eq("strategy_id", int(sid)).order("trade_date", desc=True).limit(1).execute()
-        
-        if res.data:
-            row = res.data[0]
-            saved_base_capital = float(row.get('base_capital') or 0.0)
-            
-            # THE NUKE & REBUILD DETECTOR
-            if saved_base_capital != current_master_capital:
-                print(f"   ⚠️ CAPITAL MISMATCH for ID {sid} (Saved: {saved_base_capital} | Master: {current_master_capital}). Wiping historical data to force full recalculation.")
-                
-                # Delete all historical rows for this specific strategy
-                supabase.table("daily_strategy_pnl").delete().eq("strategy_id", int(sid)).execute()
-                
-                # Reset internal memory to treat as brand new
-                strategy_states[sid] = {
-                    'latest_date': '2000-01-01',
-                    'cum_pnl': 0.0,
-                    'peak_pnl': 0.0
-                }
-            else:
-                strategy_states[sid] = {
-                    'latest_date': row['trade_date'],
-                    'cum_pnl': float(row.get('cumulative_pnl') or 0.0),
-                    'peak_pnl': float(row.get('peak_cumulative_pnl') or 0.0)
-                }
-        else:
-            strategy_states[sid] = {
-                'latest_date': '2000-01-01',
-                'cum_pnl': 0.0,
-                'peak_pnl': 0.0
-            }
-            
     global_min_date = min([state['latest_date'] for state in strategy_states.values()])
 
-    # 4. Bulk Intraday Fetch (Only fetching data newer than the furthest behind strategy)
+    # 4. Bulk Intraday Fetch (Only fetching data newer than the furthest behind active strategy)
     print(f"🔎 Bulk fetching new intraday data since {global_min_date}...")
     new_intraday_data = []
     offset, limit = 0, 1000
@@ -250,7 +216,7 @@ def run_pnl_refresh():
 
     print("\n--- Starting Assembly Line Processing ---")
 
-    # 5. Assembly Line Processing (Per Strategy)
+    # 5. Assembly Line Processing (Per Active Strategy)
     for strat_id_str, strat_meta in active_strategies.items():
         strat_name = strat_meta.get('strategy_full_name') or strat_meta.get('strategy_name') or f"ID {strat_id_str}"
         strat_state = strategy_states[strat_id_str]
@@ -330,7 +296,7 @@ def run_pnl_refresh():
                     "strategy_grouping": strat_meta.get('strategy_grouping'),
                     "status": strat_meta['status'],
                     "deployment_type": deploy_type,
-                    "trades_type": strat_meta.get('trades_type'),
+                    "trades_types": strat_meta.get('trades_type'), # Mapped from singular
                     "base_capital": current_master_capital,
                     "pnl": round(daily_final_pnl, 2),
                     "max_profit": max_profit_obj['pnl'],
