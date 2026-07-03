@@ -82,7 +82,7 @@ def build_deployment_lookup(deploy_data):
 
 # --- CORE LOGIC ---
 def run_pnl_refresh():
-    msg_start = "🔄 Starting RESCUE MODE: Rebuilding all missing history..."
+    msg_start = "🔄 Starting Highly Optimized Production P&L Engine (Unified State & Sync)..."
     print(msg_start)
     report_progress("running", msg_start)
     
@@ -99,11 +99,11 @@ def run_pnl_refresh():
 
     # Tracking variables for the unified loop
     strategy_states = {}
-    target_strategies = {}
-    target_ids_int = []
+    active_strategies = {}
+    active_ids_int = []
     
     sync_updates_made = 0
-    nukes_triggered = 0
+    resets_triggered = 0
 
     print(f"📦 Verifying integrity and state for {len(master_res.data)} total strategies...")
 
@@ -132,13 +132,29 @@ def run_pnl_refresh():
             row = res.data[0]
             saved_cap = float(row.get('base_capital') or 0.0)
             
-            # CHECK A: Capital Mismatch
+            # CHECK A: Capital Mismatch (Soft Overwrite Trigger for active ones)
             if saved_cap != master_cap:
-                print(f"   ⚠️ CAPITAL MISMATCH for ID {sid} (Saved: {saved_cap} | Master: {master_cap}). Wiping history.")
-                supabase.table("daily_strategy_pnl").delete().eq("strategy_id", sid).execute()
-                nukes_triggered += 1
+                if master_status == 'Active':
+                    print(f"   ⚠️ CAPITAL MISMATCH for Active ID {sid} (Saved: {saved_cap} | Master: {master_cap}). Forcing soft recalculation.")
+                    latest_date = '2000-01-01'
+                    cum_pnl = 0.0
+                    peak_pnl = 0.0
+                    resets_triggered += 1
+                else:
+                    # If it's archived/inactive, just perform a clean master metadata sync update on the existing history rows instead of math recalculation
+                    update_payload = {'base_capital': master_cap}
+                    if row.get('strategy_name') != master_name: update_payload['strategy_name'] = master_name
+                    if row.get('status') != master_status: update_payload['status'] = master_status
+                    if row.get('deployment_type') != master_dep: update_payload['deployment_type'] = master_dep
+                    if row.get('strategy_grouping') != master_grp: update_payload['strategy_grouping'] = master_grp
+                    if row.get('trades_type') != master_tt: update_payload['trades_type'] = master_tt
+                    
+                    supabase.table("daily_strategy_pnl").update(update_payload).eq("strategy_id", sid).execute()
+                    print(f"   🔄 Updated archived ID {sid} baseline capital/metadata via sync.")
+                    sync_updates_made += 1
+                    continue
             else:
-                # CHECK B: Metadata Mismatch
+                # CHECK B: Metadata Mismatch (Standard Sync)
                 update_payload = {}
                 if row.get('strategy_name') != master_name: update_payload['strategy_name'] = master_name
                 if row.get('status') != master_status: update_payload['status'] = master_status
@@ -155,19 +171,20 @@ def run_pnl_refresh():
                 cum_pnl = float(row.get('cumulative_pnl') or 0.0)
                 peak_pnl = float(row.get('peak_cumulative_pnl') or 0.0)
 
-        # RESCUE MODE: Queue EVERY strategy (Active & Archived) to force history rebuild
-        strategy_states[sid_str] = {
-            'latest_date': latest_date,
-            'cum_pnl': cum_pnl,
-            'peak_pnl': peak_pnl
-        }
-        target_ids_int.append(sid)
-        target_strategies[sid_str] = s
+        # PRODUCTION SAFETY: Only track and compute heavy daily intraday math loops for ACTIVE strategies
+        if master_status == 'Active':
+            strategy_states[sid_str] = {
+                'latest_date': latest_date,
+                'cum_pnl': cum_pnl,
+                'peak_pnl': peak_pnl
+            }
+            active_ids_int.append(sid)
+            active_strategies[sid_str] = s
 
-    print(f"✅ State extraction complete. Syncs: {sync_updates_made} | Rebuilds triggered: {nukes_triggered}\n")
+    print(f"✅ State extraction complete. Syncs: {sync_updates_made} | Soft Rebuilds queued: {resets_triggered}\n")
 
-    if not target_strategies:
-        msg_none = "✅ No strategies require math updates today."
+    if not active_strategies:
+        msg_none = "✅ Metadata verified. No active strategies require math calculations today."
         print(msg_none)
         report_progress("success", msg_none)
         return
@@ -179,18 +196,18 @@ def run_pnl_refresh():
     
     unit_cap_map = {}
     today_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-    for sid, strat in target_strategies.items():
+    for sid, strat in active_strategies.items():
         curr_lot = get_historical_lot_size(lot_lookup, strat.get('index_name'), today_str)
         unit_cap_map[sid] = float(strat.get('capital', 0)) / curr_lot if curr_lot else 0
 
     global_min_date = min([state['latest_date'] for state in strategy_states.values()])
 
-    # 4. Bulk Intraday Fetch 
-    print(f"🔎 Bulk fetching new intraday data since {global_min_date}...")
+    # 4. Bulk Intraday Fetch (Only pull new data since the furthest back tracked date among active strategies)
+    print(f"🔎 Bulk fetching active intraday data since {global_min_date}...")
     new_intraday_data = []
     offset, limit = 0, 1000
     while True:
-        res = supabase.table("intraday_pnl_1min_closing").select("*").in_("strategy_id", target_ids_int).gt("trade_date", global_min_date).range(offset, offset + limit - 1).execute()
+        res = supabase.table("intraday_pnl_1min_closing").select("*").in_("strategy_id", active_ids_int).gt("trade_date", global_min_date).range(offset, offset + limit - 1).execute()
         chunk = res.data
         if not chunk: break
         new_intraday_data.extend(chunk)
@@ -198,7 +215,7 @@ def run_pnl_refresh():
         offset += limit
 
     # Group new intraday data by strategy in memory
-    intraday_grouped = {sid: [] for sid in target_strategies.keys()}
+    intraday_grouped = {sid: [] for sid in active_strategies.keys()}
     for row in new_intraday_data:
         sid_str = str(row['strategy_id'])
         if sid_str in intraday_grouped:
@@ -212,25 +229,24 @@ def run_pnl_refresh():
 
     print("\n--- Starting Assembly Line Processing ---")
 
-    # 5. Assembly Line Processing 
-    for strat_id_str, strat_meta in target_strategies.items():
+    # 5. Assembly Line Processing (Per Active Strategy)
+    for strat_id_str, strat_meta in active_strategies.items():
         strat_name = strat_meta.get('strategy_full_name') or strat_meta.get('strategy_name') or f"ID {strat_id_str}"
         strat_state = strategy_states[strat_id_str]
         
         # A. Filter and SORT raw records specifically for this strategy
         raw_strategy_records = [row for row in intraday_grouped[strat_id_str] if row['trade_date'] > strat_state['latest_date']]
         
-        # --- THE DEDUPLICATOR FIX ---
-        # Filter down to the final record for each specific date to prevent postgres conflict errors
+        # THE DATE DEDUPLICATOR
         deduped_records = {}
         for row in raw_strategy_records:
             deduped_records[row['trade_date']] = row
         
         strategy_records = list(deduped_records.values())
-        strategy_records.sort(key=lambda x: x['trade_date']) # CRITICAL: Sort chronologically for math
+        strategy_records.sort(key=lambda x: x['trade_date']) # CRITICAL: Chronological sorting for tracking curves
         
         if not strategy_records:
-            print(f"[INFO] No new data for: {strat_name} (Latest: {strat_state['latest_date']})")
+            print(f"[INFO] No new data for active strategy: {strat_name} (Latest matched: {strat_state['latest_date']})")
             continue
 
         processed_strategies.add(strat_name)
@@ -348,7 +364,7 @@ def run_pnl_refresh():
     print(f"Total raw intraday records fetched: {len(new_intraday_data)}")
     print(f"Total records successfully upserted: {total_upserted}")
     print(f"Unique dates processed: {len(processed_dates)}")
-    print(f"Unique strategies updated: {len(processed_strategies)}")
+    print(f"Unique active strategies updated: {len(processed_strategies)}")
     print(f"Records skipped/failed: {skipped_records}")
     print("--------------------------\n")
 
@@ -357,7 +373,7 @@ def run_pnl_refresh():
         print(msg_final)
         report_progress("success", msg_final)
     else:
-        msg_done = "✅ Already up to date. No new records were inserted."
+        msg_done = "✅ Already up to date. No new active records were inserted."
         print(msg_done)
         report_progress("success", msg_done)
 
