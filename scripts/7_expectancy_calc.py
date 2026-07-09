@@ -11,13 +11,14 @@ SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 def fetch_all_paginated(table_name):
-    print(f"📡 Fetching data from: {table_name}...")
+    print(f"📡 Fetching complete table: {table_name}...")
     all_data = []
     offset = 0
     limit = 1000
     while True:
         res = supabase.table(table_name).select("*").range(offset, offset + limit - 1).execute()
         data = res.data
+        if not data: break
         all_data.extend(data)
         if len(data) < limit: break
         offset += limit
@@ -47,9 +48,8 @@ def run_expectancy_calc():
     print("🚀 INITIALIZING STEP 7: EXPECTANCY UI REFRESH (Live Auto Only)")
     report_heartbeat("running", "📊 Computing Live Auto Stats...")
 
-    # 1. Fetching Data
+    # 1. Fetch Master Strategies FIRST
     df_strategies = fetch_all_paginated("strategies")
-    df_daily = fetch_all_paginated("daily_strategy_pnl") 
     
     # 2. Strict Filtering: Active AND Live Auto
     eligible_strats = df_strategies[
@@ -57,16 +57,47 @@ def run_expectancy_calc():
         (df_strategies['deployment_type'] == 'Live Auto')
     ]
     
-    print(f"🔍 Filtered {len(eligible_strats)} 'Active & Live Auto' strategies from {len(df_strategies)} total.")
+    active_ids = eligible_strats['strategy_id'].astype(int).tolist()
+    
+    if not active_ids:
+        msg = "✅ No Active & Live Auto strategies found. Exiting."
+        print(msg)
+        report_heartbeat("success", msg)
+        return
+        
+    print(f"🔍 Filtered {len(active_ids)} 'Active & Live Auto' strategies from {len(df_strategies)} total.")
+
+    # 3. RAM TIMEBOMB FIX: Targeted Fetching
+    # We force the database to only send rows belonging to the exact IDs we need.
+    print(f"📡 Fetching historical daily P&L data ONLY for the {len(active_ids)} eligible strategies...")
+    all_daily_data = []
+    offset = 0
+    limit = 1000
+    while True:
+        res = supabase.table("daily_strategy_pnl").select("*").in_("strategy_id", active_ids).range(offset, offset + limit - 1).execute()
+        chunk = res.data
+        if not chunk: break
+        all_daily_data.extend(chunk)
+        if len(chunk) < limit: break
+        offset += limit
+        
+    df_daily = pd.DataFrame(all_daily_data)
+    
+    if df_daily.empty:
+        msg = "⚠️ No historical PNL data found for the active strategies."
+        print(msg)
+        report_heartbeat("success", msg)
+        return
 
     all_expectancy_payloads = []
     now_iso = datetime.utcnow().isoformat()
 
+    # 4. Assembly Line Processing
     for _, strat in eligible_strats.iterrows():
         sid = int(strat['strategy_id'])
         sname = str(strat['strategy_name'])
         
-        # Filter daily rows for this specific ID from the UI P&L table
+        # Filter daily rows for this specific ID from our highly targeted dataframe
         s_df = df_daily[df_daily['strategy_id'] == sid].sort_values('trade_date').reset_index(drop=True)
         
         if s_df.empty:
@@ -79,7 +110,7 @@ def run_expectancy_calc():
         cum_series = s_df['cumulative_pnl'].astype(float) 
         current_capital = eff_cap_series[-1] 
 
-        # 3. Core Math (Non-Capital Dependent)
+        # 5. Core Math (Non-Capital Dependent)
         wins = pnls[pnls > 0]
         losses = np.abs(pnls[pnls < 0])
         nonzero_pnls = pnls[pnls != 0]
@@ -100,7 +131,7 @@ def run_expectancy_calc():
         years = max(days_count / 252.0, 0.001) # Avoid div by zero
         cagr = round(float((1 + total_ret_pct)**(1/years) - 1), 6) if (1 + total_ret_pct) > 0 else 0.0
 
-        # 4. Drawdowns
+        # 6. Drawdowns
         peaks = cum_series.cummax()
         drawdowns = peaks - cum_series
         max_dd = round(float(drawdowns.max()), 2)
@@ -116,7 +147,7 @@ def run_expectancy_calc():
             peak_idx = cum_series.iloc[:trough_idx][cum_series == peak_val].index[-1]
             duration = int(recovery.index[0] - peak_idx) if not recovery.empty else int((len(s_df) - 1) - peak_idx)
 
-        # 5. DYNAMIC ROI MATH (Correcting for Lot Size/Capital shifts)
+        # 7. DYNAMIC ROI MATH (Correcting for Lot Size/Capital shifts)
         daily_rets = pnls / eff_cap_series
         vol = round(float(np.std(daily_rets, ddof=1) * np.sqrt(252)), 6) if len(daily_rets) > 1 else 0.0
         sharpe = round(float(cagr / vol), 6) if vol > 0 else 0.0
@@ -126,7 +157,7 @@ def run_expectancy_calc():
         sortino = round(float(cagr / down_vol), 6) if down_vol > 0 else 0.0
         calmar = round(float(cagr / max_dd_percent), 6) if max_dd_percent > 0 else 0.0
 
-        # 6. Sparkline & Monthly PnL
+        # 8. Sparkline & Monthly PnL
         spark_data = downsample_series(cum_series / eff_cap_series, 25)
         spark_json = [round(float(x * 100), 6) for x in spark_data]
 
@@ -170,7 +201,7 @@ def run_expectancy_calc():
             "deployment_type": str(strat['deployment_type'])
         })
 
-    # 7. Upsert to Supabase
+    # 9. Upsert to Supabase
     if all_expectancy_payloads:
         print(f"📤 Uploading {len(all_expectancy_payloads)} records to expectancy...")
         try:
