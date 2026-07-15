@@ -120,10 +120,26 @@ def sync_audit_to_shadow():
 
         if not res.data: break
 
-        batch_new = [row for row in res.data if row['id'] not in existing_ids]
+        batch_new = []
+        stuck_ids = []
+        
+        for row in res.data:
+            if row['id'] in existing_ids:
+                stuck_ids.append(row['id'])
+            else:
+                batch_new.append(row)
+        
+        # SELF-HEALING PATCH: Instantly fix any rows that were trapped in a dirty state
+        if stuck_ids:
+            supabase.table("strategy_trades_audit") \
+                .update({"status": "synced_to_verification"}) \
+                .in_("id", stuck_ids).execute()
+            print(f"   🩹 Self-healed {len(stuck_ids)} previously stuck rows in this batch.")
+
         new_audit_rows.extend(batch_new)
 
         print(f"   - Scanning pending rows {offset} to {offset + len(res.data)}... Found {len(new_audit_rows)} unique.")
+        
         if len(res.data) < 1000: break
         offset += 1000
 
