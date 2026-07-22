@@ -214,7 +214,7 @@ def run_smart_fetcher():
             if response.get("s") == "ok":
                 candles = response.get("candles", [])
                 if candles:
-                    ohlc_batch = []
+                    ohlc_batch = {} # Changed from list to dictionary
                     for c in candles:
                         # Exact Legacy Time Formatting Logic 
                         dt_obj = datetime.fromtimestamp(c[0], ist)
@@ -222,7 +222,8 @@ def run_smart_fetcher():
                         if time_part.startswith('0'): time_part = time_part[1:]
                         readable_ist_ts = f"{t_date} {time_part}"
 
-                        ohlc_batch.append({
+                        # Dictionary assignment seamlessly overwrites duplicates using timestamp as the key
+                        ohlc_batch[readable_ist_ts] = {
                             "token": str(valid_token),
                             "ts": readable_ist_ts,
                             "symbol": b_sym, # Will be the corrected Monthly string if Fallback triggered
@@ -231,12 +232,14 @@ def run_smart_fetcher():
                             "low": float(c[3]),
                             "close": float(c[4]),
                             "volume": int(c[5])
-                        })
+                        }
 
                     if ohlc_batch:
-                        supabase.table("market_ohlc_cache").upsert(ohlc_batch).execute()
-                        row_count = len(ohlc_batch)
-                        print(f"   📥 [SUCCESS] API returned {row_count} candles. Cached successfully.")
+                        # Convert dictionary values back to a list for the final payload
+                        final_payload = list(ohlc_batch.values())
+                        supabase.table("market_ohlc_cache").upsert(final_payload).execute()
+                        row_count = len(final_payload)
+                        print(f"   📥 [SUCCESS] API returned {row_count} unique candles. Cached successfully.")
                 else:
                     print(f"   ⚠️ [EMPTY] Fyers API returned empty candles array for this range.")
             else:
