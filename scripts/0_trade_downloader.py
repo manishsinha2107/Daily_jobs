@@ -71,11 +71,20 @@ async def run_smart_downloader():
     log(f"📡 Fetching {config.DEPLOYMENT_TYPES} strategies from Supabase...")
     
     supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)    
-    res = supabase.table("strategies") \
+    
+    # Base query for Active strategies and Deployment Types
+    query = supabase.table("strategies") \
         .select("user_email, email_password, strategy_name, strategy_id, deployment_type") \
         .eq("status", "Active") \
-        .in_("deployment_type", config.DEPLOYMENT_TYPES) \
-        .execute()
+        .in_("deployment_type", config.DEPLOYMENT_TYPES)
+        
+    # Dynamically apply the email filter if TARGET_EMAILS is populated in config
+    if hasattr(config, 'TARGET_EMAILS') and config.TARGET_EMAILS:
+        query = query.in_("user_email", config.TARGET_EMAILS)
+        log(f"🎯 Applying targeted email filter for {len(config.TARGET_EMAILS)} users...")
+        
+    # Execute the final query
+    res = query.execute()
     
     if not res.data:
         update_heartbeat("success", "🏁 No active strategies found.")
