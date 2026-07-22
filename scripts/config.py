@@ -18,4 +18,4 @@ else:
 #   Example: TARGET_EMAILS = ["dummy1@example.com", "dummy2@example.com", "dummy3@example.com"]
 # - To run normally for ALL active users: Leave this list completely empty.
 #   Example: TARGET_EMAILS = []
-TARGET_EMAILS = ["dummy1@example.com", "dummy2@example.com", "dummy3@example.com"]
+TARGET_EMAILS = ["manish.kumar@ensuringsuccess.in"]
