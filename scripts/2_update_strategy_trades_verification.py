@@ -131,10 +131,18 @@ def sync_audit_to_shadow():
         
         # SELF-HEALING PATCH: Instantly fix any rows that were trapped in a dirty state
         if stuck_ids:
-            supabase.table("strategy_trades_audit") \
-                .update({"status": "synced_to_verification"}) \
-                .in_("id", stuck_ids).execute()
-            print(f"   🩹 Self-healed {len(stuck_ids)} previously stuck rows in this batch.")
+            chunk_size = 100
+            healed_count = 0
+            for i in range(0, len(stuck_ids), chunk_size):
+                chunk = stuck_ids[i:i + chunk_size]
+                try:
+                    supabase.table("strategy_trades_audit") \
+                        .update({"status": "synced_to_verification"}) \
+                        .in_("id", chunk).execute()
+                    healed_count += len(chunk)
+                except Exception as e:
+                    print(f"⚠️ Failed to self-heal chunk: {e}")
+            print(f"   🩹 Self-healed {healed_count} previously stuck rows in this batch.")
 
         new_audit_rows.extend(batch_new)
 
