@@ -105,12 +105,13 @@ def sync_audit_to_shadow():
         offset += 1000
     print(f"   - Found {len(existing_ids)} IDs already in Verification.")
 
+
     # 2. Fetch New Audit Rows (Filtered)
     print("\n📥 Step 2: Fetching Audit rows with status 'pending_ohlc'...")
     # --- REPORTING PROGRESS ---
-    report_progress("running", f"📥 Fetching Audit: {len(existing_ids)} exist...")
+    report_progress("running", f"📥 Fetching all pending Audit records...")
     
-    new_audit_rows = []
+    raw_pending_rows = []
     offset = 0
     while True:
         res = supabase.table("strategy_trades_audit") \
@@ -118,41 +119,47 @@ def sync_audit_to_shadow():
             .eq("status", "pending_ohlc") \
             .range(offset, offset + 999).execute()
 
-        if not res.data: break
-
-        batch_new = []
-        stuck_ids = []
+        if not res.data: 
+            break
+            
+        raw_pending_rows.extend(res.data)
+        print(f"   - Scanned pending rows {offset} to {offset + len(res.data)}...")
         
-        for row in res.data:
-            if row['id'] in existing_ids:
-                stuck_ids.append(row['id'])
-            else:
-                batch_new.append(row)
-        
-        # SELF-HEALING PATCH: Instantly fix any rows that were trapped in a dirty state
-        if stuck_ids:
-            chunk_size = 100
-            healed_count = 0
-            for i in range(0, len(stuck_ids), chunk_size):
-                chunk = stuck_ids[i:i + chunk_size]
-                try:
-                    supabase.table("strategy_trades_audit") \
-                        .update({"status": "synced_to_verification"}) \
-                        .in_("id", chunk).execute()
-                    healed_count += len(chunk)
-                except Exception as e:
-                    print(f"⚠️ Failed to self-heal chunk: {e}")
-            print(f"   🩹 Self-healed {healed_count} previously stuck rows in this batch.")
-
-        new_audit_rows.extend(batch_new)
-
-        print(f"   - Scanning pending rows {offset} to {offset + len(res.data)}... Found {len(new_audit_rows)} unique.")
-        
-        if len(res.data) < 1000: break
+        if len(res.data) < 1000: 
+            break
         offset += 1000
 
+    print(f"   - Total fetched from audit: {len(raw_pending_rows)}")
+
+    batch_new = []
+    stuck_ids = []
+    
+    for row in raw_pending_rows:
+        if row['id'] in existing_ids:
+            stuck_ids.append(row['id'])
+        else:
+            batch_new.append(row)
+    
+    # SELF-HEALING PATCH: Instantly fix any rows that were trapped in a dirty state in chunks of 100
+    if stuck_ids:
+        chunk_size = 100
+        healed_count = 0
+        for i in range(0, len(stuck_ids), chunk_size):
+            chunk = stuck_ids[i:i + chunk_size]
+            try:
+                supabase.table("strategy_trades_audit") \
+                    .update({"status": "synced_to_verification"}) \
+                    .in_("id", chunk).execute()
+                healed_count += len(chunk)
+            except Exception as e:
+                print(f"⚠️ Failed to self-heal chunk: {e}")
+        print(f"   🩹 Self-healed {healed_count} previously stuck rows.")
+
+    new_audit_rows = batch_new
+    print(f"   - Found {len(new_audit_rows)} unique new trades to process.")
+
     if not new_audit_rows:
-        print("\n✅ No 'pending_ohlc' trades found. Exiting.")
+        print("\n✅ No new 'pending_ohlc' trades to process. Exiting.")
         # --- REPORTING IDLE COMPLETION ---
         report_progress("success", "✅ No pending trades found.")
         return
