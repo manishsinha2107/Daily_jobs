@@ -108,7 +108,7 @@ def run_pnl_refresh():
     # 1. THE UNIFIED MASTER FETCH (FILTERED FOR ACTIVE & LIVE AUTO)
     master_res = supabase.table("strategies").select(
         "strategy_id, strategy_name, strategy_full_name, status, deployment_type, strategy_grouping, trades_type, capital, index_name, user_name"
-    ).eq("status", "Active").eq("deployment_type", "Live Auto").execute()
+    ).eq("status", "Active").execute()
     
     if not master_res.data:
         msg_none = "✅ No strategies found in master table."
