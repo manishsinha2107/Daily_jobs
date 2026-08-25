@@ -9,7 +9,7 @@ import math
 def get_active_strategy_ids():
     """Fetches a set of strategy_ids where status is 'Active'."""
     try:
-        res = supabase.table("strategies").select("strategy_id").eq("status", "Active").execute()
+        res = supabase.table("strategies").select("strategy_id").eq("status", "Active").eq("deployment_type", "Live Auto").execute()
         if res.data:
             return {int(row['strategy_id']) for row in res.data if row.get('strategy_id') is not None}
         return set()
