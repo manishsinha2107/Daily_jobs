@@ -221,7 +221,9 @@ def run_pnl_refresh():
         curr_lot = get_historical_lot_size(lot_lookup, strat.get('index_name'), today_str)
         unit_cap_map[sid] = float(strat.get('capital', 0)) / curr_lot if curr_lot else 0
 
-    global_min_date = min([state['latest_date'] for state in strategy_states.values()])
+    # --- TEMPORARILY FORCE PULL ALL HISTORY ---
+    global_min_date = '2000-01-01'
+    # ------------------------------------------
 
     # 4. Bulk Intraday Fetch (Only pull new data since the furthest back tracked date among active strategies)
     print(f"🔎 Bulk fetching active intraday data since {global_min_date}...")
