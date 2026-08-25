@@ -4,6 +4,27 @@ from datetime import datetime, timedelta
 from dotenv import load_dotenv
 from supabase import create_client, Client
 
+import math
+
+def get_dynamic_freeze_limit(strat_id, trade_date):
+    """Fetches the historically accurate freeze limit for a strategy's index."""
+    try:
+        # 1. Fetch index_name
+        strat_res = supabase.table("strategies").select("index_name").eq("strategy_id", strat_id).execute()
+        if not strat_res.data:
+            return 1000000 # Safe fallback to avoid division by zero
+        index_name = strat_res.data[0].get('index_name')
+        
+        # 2. Fetch freeze limit based on exact trade date
+        lot_res = supabase.table("lot_sizes").select("freeze_limit").eq("instrument", index_name).lte("effective_date", trade_date).order("effective_date", desc=True).limit(1).execute()
+        if lot_res.data and lot_res.data[0].get('freeze_limit'):
+            limit = int(lot_res.data[0]['freeze_limit'])
+            return limit if limit > 0 else 1000000
+        return 1000000
+    except Exception as e:
+        print(f"⚠️ Error fetching freeze limit: {e}")
+        return 1000000
+
 # --- MIGRATION FIX: Environment Awareness ---
 if os.path.exists(".env"):
     load_dotenv()
@@ -137,6 +158,23 @@ def calculate_intraday_pnl_1min_closing():
             df_all['dt_obj'] = pd.to_datetime(df_all['txn_time'], format='mixed')
             df_all = df_all.sort_values(by='dt_obj')
 
+            # --- START OF NON-DESTRUCTIVE METRICS INJECTION ---
+            # 1. Calculate Fills
+            daily_buy_fills = int((df_all['txn_type'] == 'B').sum())
+            daily_sell_fills = int((df_all['txn_type'] == 'S').sum())
+            
+            # 2. Calculate Premium Turnover
+            temp_qty = df_all['quantity'].astype(float).abs()
+            temp_price = df_all['price'].astype(float)
+            daily_turnover = float((temp_qty * temp_price).sum())
+            
+            # 3. Calculate Order Count based on Freeze Limit
+            freeze_limit = get_dynamic_freeze_limit(strat_id, t_date)
+            # Group by exact execution time, instrument, and type to simulate distinct orders
+            grouped_trades = df_all.groupby(['txn_time', 'broker_symbol', 'txn_type'])['quantity'].apply(lambda x: x.astype(float).abs().sum())
+            daily_order_count = int(sum(math.ceil(qty / freeze_limit) for qty in grouped_trades))
+            # --- END OF INJECTION ---
+
             instruments = df_all['broker_symbol'].unique().tolist()
             ohlc_data = fetch_ohlc_data_paginated(instruments, t_date)
 
@@ -210,13 +248,16 @@ def calculate_intraday_pnl_1min_closing():
                 if not has_active_inventory and current_time > df_all['dt_obj'].max():
                     break
                 current_time = next_minute
-
             if pnl_series:
                 supabase.table("intraday_pnl_1min_closing").upsert(
                     {
                         "strategy_id": int(strat_id),
                         "trade_date": t_date,
                         "pnl_data": pnl_series,
+                        "buy_fills": daily_buy_fills,
+                        "sell_fills": daily_sell_fills,
+                        "order_count": daily_order_count,
+                        "premium_turnover": round(daily_turnover, 2),
                         "updated_at": datetime.now().isoformat()
                     },
                     on_conflict="strategy_id, trade_date"
