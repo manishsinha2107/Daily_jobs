@@ -69,6 +69,24 @@ def get_historical_lot_size(lookup, index_name, target_date_str):
     if not valid_lots: return lookup[index_name][-1]['lot_size'] 
     return valid_lots[0]['lot_size']
 
+def build_tax_lookup(tax_data):
+    lookup = {}
+    for row in tax_data:
+        seg = row['segment']
+        if seg not in lookup: lookup[seg] = []
+        lookup[seg].append(row)
+    for seg in lookup:
+        lookup[seg].sort(key=lambda x: x['effective_date'], reverse=True)
+    return lookup
+
+def get_historical_tax(lookup, segment, target_date_str):
+    if segment not in lookup or not lookup[segment]:
+        raise ValueError(f"❌ Missing tax data in DB for segment {segment}")
+    valid_taxes = [t for t in lookup[segment] if t['effective_date'] <= target_date_str]
+    if not valid_taxes:
+        return lookup[segment][-1] 
+    return valid_taxes[0]
+
 def build_deployment_lookup(deploy_data):
     lookup = {}
     for row in deploy_data:
@@ -190,8 +208,10 @@ def run_pnl_refresh():
         return
 
     # 3. Bulk Memory Load (Lookups)
-    print("📦 Fetching lot sizes and deployments...")
+
+    print("📦 Fetching lot sizes, taxes, and deployments...")
     lot_lookup = build_lot_size_lookup(fetch_all_paginated("lot_sizes"))
+    tax_lookup = build_tax_lookup(fetch_all_paginated("market_tax_rates"))
     deploy_lookup = build_deployment_lookup(fetch_all_paginated("live_deployments"))
     
     unit_cap_map = {}
@@ -274,6 +294,35 @@ def run_pnl_refresh():
                     continue
                 
                 daily_final_pnl = float(pnl_json[-1]['pnl'])
+                # --- START STRICT COST LAB EXTRACTION & MATH ---
+                daily_buy_fills = int(row.get('buy_fills') or 0)
+                daily_sell_fills = int(row.get('sell_fills') or 0)
+                daily_order_count = int(row.get('order_count') or 0)
+                daily_turnover = float(row.get('premium_turnover') or 0.0)
+
+                # HARD STOP: If P&L exists but turnover is missing, crash immediately
+                if daily_turnover == 0.0 and daily_final_pnl != 0.0:
+                    error_msg = f"❌ FATAL ERROR: premium_turnover missing for {strat_name} on {t_date_str}. Run Script 4 to backfill first."
+                    print(error_msg)
+                    report_progress("error", error_msg)
+                    raise ValueError(error_msg)
+
+                # Apply Tax Math (Assuming NFO_OPT segment for options)
+                tax_rates = get_historical_tax(tax_lookup, 'NFO_OPT', t_date_str)
+                half_turnover = daily_turnover / 2 # Intraday assumes roughly equal buy/sell premium split
+                
+                exchange_fee = daily_turnover * (float(tax_rates['exchange_fee_pct']) / 100)
+                stt = half_turnover * (float(tax_rates['stt_sell_pct']) / 100)
+                stamp_duty = half_turnover * (float(tax_rates['stamp_duty_buy_pct']) / 100)
+                sebi_fee = (daily_turnover / 10000000) * float(tax_rates['sebi_fee_per_crore'])
+                brokerage = daily_order_count * float(tax_rates['default_brokerage_per_order'])
+                
+                total_taxable_fees = brokerage + exchange_fee + sebi_fee
+                gst = total_taxable_fees * (float(tax_rates['gst_pct']) / 100)
+                
+                estimated_costs = exchange_fee + stt + stamp_duty + sebi_fee + brokerage + gst
+                daily_net_pnl = daily_final_pnl - estimated_costs
+                # --- END COST LAB ---
                 max_profit_obj = max(pnl_json, key=lambda x: float(x['pnl']))
                 max_loss_obj = min(pnl_json, key=lambda x: float(x['pnl']))
                 
@@ -330,6 +379,12 @@ def run_pnl_refresh():
                     "cumulative_pnl": round(running_cum_pnl, 2),
                     "peak_cumulative_pnl": round(running_peak, 2),
                     "max_dd_amount": round(max_dd_amount, 2),
+                    "buy_fills": daily_buy_fills,
+                    "sell_fills": daily_sell_fills,
+                    "order_count": daily_order_count,
+                    "premium_turnover": round(daily_turnover, 2),
+                    "estimated_costs": round(estimated_costs, 2),
+                    "net_pnl": round(daily_net_pnl, 2),
                     "updated_at": datetime.now(timezone.utc).isoformat()
                 })
                 
