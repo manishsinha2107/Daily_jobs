@@ -105,9 +105,10 @@ def run_pnl_refresh():
     report_progress("running", msg_start)
     
     # 1. THE UNIFIED MASTER FETCH
+    # 1. THE UNIFIED MASTER FETCH (FILTERED FOR ACTIVE & LIVE AUTO)
     master_res = supabase.table("strategies").select(
         "strategy_id, strategy_name, strategy_full_name, status, deployment_type, strategy_grouping, trades_type, capital, index_name, user_name"
-    ).execute()
+    ).eq("status", "Active").eq("deployment_type", "Live Auto").execute()
     
     if not master_res.data:
         msg_none = "✅ No strategies found in master table."
@@ -255,7 +256,9 @@ def run_pnl_refresh():
         strat_state = strategy_states[strat_id_str]
         
         # A. Filter and SORT raw records specifically for this strategy
-        raw_strategy_records = [row for row in intraday_grouped[strat_id_str] if row['trade_date'] > strat_state['latest_date']]
+        # --- TEMPORARILY COMMENTED OUT TO FORCE REPROCESSING ALL DATES ---
+        # raw_strategy_records = [row for row in intraday_grouped[strat_id_str] if row['trade_date'] > strat_state['latest_date']]
+        raw_strategy_records = intraday_grouped[strat_id_str]
         
         # THE DATE DEDUPLICATOR
         deduped_records = {}
