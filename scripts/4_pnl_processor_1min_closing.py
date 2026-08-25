@@ -136,18 +136,19 @@ def calculate_intraday_pnl_1min_closing():
             # --- REPORTING PROGRESS ---
             report_progress("running", f"📈 [{processed_count}/{total_dates}] Processing Strat {strat_id}...")
 
-            # --- NEW: PRE-CALCULATION CHECK ---
-            check = supabase.table("intraday_pnl_1min_closing") \
-                .select("strategy_id") \
-                .eq("strategy_id", strat_id) \
-                .eq("trade_date", t_date) \
-                .execute()
+            # --- NEW: PRE-CALCULATION CHECK (COMMENTED OUT TO FORCE RECALCULATION) ---
+            # check = supabase.table("intraday_pnl_1min_closing") \
+            #     .select("strategy_id") \
+            #     .eq("strategy_id", strat_id) \
+            #     .eq("trade_date", t_date) \
+            #     .execute()
 
-            if check.data:
-                supabase.table("strategy_trades_verification").update({"pnl_1min_status": "completed"}) \
-                    .eq("strategy_id", strat_id).eq("trade_date", t_date).execute()
-                print(f"  ⏭️ {t_date} | Already calculated. Status synced.")
-                continue
+            # if check.data:
+            #     supabase.table("strategy_trades_verification").update({"pnl_1min_status": "completed"}) \
+            #         .eq("strategy_id", strat_id).eq("trade_date", t_date).execute()
+            #     print(f"  ⏭️ {t_date} | Already calculated. Status synced.")
+            #     continue
+            # --- END OF COMMENTED BLOCK ---
 
             res = supabase.table("strategy_trades_verification").select("*") \
                 .eq("strategy_id", strat_id).eq("trade_date", t_date).execute()
