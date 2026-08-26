@@ -1,5 +1,6 @@
 import os
 import json
+import math
 import pandas as pd
 import numpy as np
 from datetime import datetime
@@ -67,8 +68,7 @@ def run_expectancy_calc():
         
     print(f"🔍 Filtered {len(active_ids)} 'Active & Live Auto' strategies from {len(df_strategies)} total.")
 
-    # 3. RAM TIMEBOMB FIX: Targeted Fetching
-    # We force the database to only send rows belonging to the exact IDs we need.
+    # 3. Targeted Fetching
     print(f"📡 Fetching historical daily P&L data ONLY for the {len(active_ids)} eligible strategies...")
     all_daily_data = []
     offset = 0
@@ -97,7 +97,7 @@ def run_expectancy_calc():
         sid = int(strat['strategy_id'])
         sname = str(strat['strategy_name'])
         
-        # Filter daily rows for this specific ID from our highly targeted dataframe
+        # Filter daily rows for this specific ID
         s_df = df_daily[df_daily['strategy_id'] == sid].sort_values('trade_date').reset_index(drop=True)
         
         if s_df.empty:
@@ -149,6 +149,7 @@ def run_expectancy_calc():
 
         # 7. DYNAMIC ROI MATH (Correcting for Lot Size/Capital shifts)
         daily_rets = pnls / eff_cap_series
+        dr_series = pd.Series(daily_rets)
         vol = round(float(np.std(daily_rets, ddof=1) * np.sqrt(252)), 6) if len(daily_rets) > 1 else 0.0
         sharpe = round(float(cagr / vol), 6) if vol > 0 else 0.0
         
@@ -158,7 +159,7 @@ def run_expectancy_calc():
         calmar = round(float(cagr / max_dd_percent), 6) if max_dd_percent > 0 else 0.0
 
         # --- START OF ADVANCED INSTITUTIONAL METRICS (TEAR SHEET JSON) ---
-        daily_rets_pct = daily_rets * 100 # Convert to percentage form
+        daily_rets_pct = daily_rets * 100 
 
         # 1. Tail Risk: VaR 95% & CVaR 95%
         if len(daily_rets_pct) > 5:
@@ -167,18 +168,36 @@ def run_expectancy_calc():
         else:
             var_95, cvar_95 = 0.0, 0.0
 
-        # 2. Ulcer Index (Quadratic drawdown depth/duration measure)
-        # Formula: sqrt(sum(drawdown_pct^2) / N)
+        # 2. Ulcer Index
         if len(drawdowns) > 0 and current_capital > 0:
             dd_pct_series = (drawdowns / current_capital) * 100
             ulcer_index = round(float(np.sqrt(np.mean(dd_pct_series ** 2))), 2)
         else:
             ulcer_index = 0.0
 
-        # 3. Fat Tail (Worst day vs Average loss day)
-        avg_loss_val = float(np.mean(losses)) if len(losses) > 0 else 1.0
+        # 3. Fat Tail (Worst day vs Average loss day) - CORRECTED
+        avg_loss_val = float(np.mean(losses)) if len(losses) > 0 else 0.0
         worst_day_val = float(np.min(pnls)) if len(pnls) > 0 else 0.0
-        fat_tail = round(float(abs(worst_day_val / avg_loss_val)), 1) if avg_loss_val > 0 else 1.0
+        fat_tail = round(float(abs(worst_day_val / avg_loss_val)), 1) if avg_loss_val > 0 else 0.0
+
+        # 4. Probabilistic Sharpe Ratio (PSR) - CORRECTED
+        probabilistic_sharpe = 0.0
+        if len(dr_series) > 3 and vol > 0:
+            mean_ret = dr_series.mean()
+            std_ret = dr_series.std(ddof=1)
+            sr_daily = mean_ret / std_ret
+            
+            skewness = dr_series.skew()
+            exc_kurtosis = dr_series.kurt() # pandas kurt() returns excess kurtosis
+            
+            n = len(dr_series)
+            # Variance of the Sharpe Ratio
+            sr_var = (1 - (skewness * sr_daily) + ((exc_kurtosis / 4.0) * (sr_daily ** 2))) / (n - 1)
+            
+            if sr_var > 0:
+                z_score = sr_daily / math.sqrt(sr_var)
+                # CDF calculation using math.erf
+                probabilistic_sharpe = 0.5 * (1.0 + math.erf(z_score / math.sqrt(2.0)))
 
         # Pack Advanced Risk JSON
         advanced_risk_payload = {
@@ -186,15 +205,13 @@ def run_expectancy_calc():
             "cvar_95": cvar_95,
             "ulcer_index": ulcer_index,
             "fat_tail": fat_tail,
-            "probabilistic_sharpe": 85.0, # Standard statistical confidence representation
+            "probabilistic_sharpe": round(float(probabilistic_sharpe), 4),
             "recovery_factor": round(float(cum_series.iloc[-1] / max_dd), 2) if max_dd > 0 else 0.0
         }
 
-        # 4. Drawdown Ledger (Top historical falls)
-        # Extract distinct major drawdowns from the drawdown series
+        # 5. Drawdown Ledger
         drawdown_ledger = []
         if max_dd > 0:
-            # Simple top drawdown representation based on peak-to-trough series
             dd_ledger_item = {
                 "depth_rupees": max_dd,
                 "depth_pct": round(float(max_dd_percent * 100), 2),
@@ -203,7 +220,7 @@ def run_expectancy_calc():
             }
             drawdown_ledger.append(dd_ledger_item)
 
-        # 5. Day of the Week & Streak Analysis
+        # 6. Day of the Week & Streak Analysis
         s_df_streak = s_df.copy()
         s_df_streak['trade_date_dt'] = pd.to_datetime(s_df_streak['trade_date'])
         s_df_streak['day_name'] = s_df_streak['trade_date_dt'].dt.day_name()
@@ -286,7 +303,8 @@ def run_expectancy_calc():
             # --- NEW UI TEAR SHEET JSON COLUMNS ---
             "advanced_risk_json": advanced_risk_payload,
             "drawdown_ledger_json": drawdown_ledger,
-            "time_series_stats_json": time_series_stats_payload
+            "time_series_stats_json": time_series_stats_payload,
+            "probabilistic_sharpe": round(float(probabilistic_sharpe), 4) # Exposed for UI
         })
 
     # 9. Upsert to Supabase
