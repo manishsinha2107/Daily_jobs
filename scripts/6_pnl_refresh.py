@@ -220,9 +220,7 @@ def run_pnl_refresh():
         curr_lot = get_historical_lot_size(lot_lookup, strat.get('index_name'), today_str)
         unit_cap_map[sid] = float(strat.get('capital', 0)) / curr_lot if curr_lot else 0
 
-    # --- TEMPORARILY FORCE PULL ALL HISTORY ---
-    global_min_date = '2000-01-01'
-    # ------------------------------------------
+    global_min_date = min([state['latest_date'] for state in strategy_states.values()])
 
     # 4. Bulk Intraday Fetch (Only pull new data since the furthest back tracked date among active strategies)
     print(f"🔎 Bulk fetching active intraday data since {global_min_date}...")
@@ -257,10 +255,7 @@ def run_pnl_refresh():
         strat_state = strategy_states[strat_id_str]
         
         # A. Filter and SORT raw records specifically for this strategy
-        # --- TEMPORARILY COMMENTED OUT TO FORCE REPROCESSING ALL DATES ---
-        # raw_strategy_records = [row for row in intraday_grouped[strat_id_str] if row['trade_date'] > strat_state['latest_date']]
-        raw_strategy_records = intraday_grouped[strat_id_str]
-        # -----------------------------------------------------------------
+        raw_strategy_records = [row for row in intraday_grouped[strat_id_str] if row['trade_date'] > strat_state['latest_date']]
         
         # THE DATE DEDUPLICATOR
         deduped_records = {}
