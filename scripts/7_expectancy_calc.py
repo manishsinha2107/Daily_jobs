@@ -4,6 +4,7 @@ import math
 import pandas as pd
 import numpy as np
 from datetime import datetime
+import urllib.request
 from supabase import create_client, Client
 
 # Authentication
@@ -34,9 +35,10 @@ def report_heartbeat(status, msg):
             "Content-Type": "application/json",
             "Prefer": "return=minimal"
         }
-        data = {"status": status, "last_msg": msg, "updated_at": datetime.utcnow().isoformat()}
-        import requests
-        requests.patch(url, headers=headers, json=data, timeout=10)
+        data = json.dumps({"status": status, "last_msg": msg, "updated_at": datetime.utcnow().isoformat()}).encode('utf-8')
+        req = urllib.request.Request(url, data=data, headers=headers, method='PATCH')
+        with urllib.request.urlopen(req, timeout=10) as response:
+            pass
     except Exception as e:
         print(f"⚠️ Heartbeat Log Failed: {e}")
 
@@ -303,8 +305,7 @@ def run_expectancy_calc():
             # --- NEW UI TEAR SHEET JSON COLUMNS ---
             "advanced_risk_json": advanced_risk_payload,
             "drawdown_ledger_json": drawdown_ledger,
-            "time_series_stats_json": time_series_stats_payload,
-            "probabilistic_sharpe": round(float(probabilistic_sharpe), 4) # Exposed for UI
+            "time_series_stats_json": time_series_stats_payload
         })
 
     # 9. Upsert to Supabase
