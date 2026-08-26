@@ -109,7 +109,7 @@ def run_expectancy_calc():
         # Data Extraction
         pnls = s_df['pnl'].astype(float).values
         eff_cap_series = s_df['eff_capital'].astype(float).values
-        cum_series = s_df['cumulative_pnl'].astype(float) 
+        cum_series = s_df['pnl'].astype(float).cumsum() 
         current_capital = eff_cap_series[-1] 
 
         # 5. Core Math (Non-Capital Dependent)
