@@ -109,7 +109,11 @@ def run_expectancy_calc():
         # Data Extraction
         pnls = s_df['pnl'].astype(float).values
         eff_cap_series = s_df['eff_capital'].astype(float).values
-        cum_series = s_df['pnl'].astype(float).cumsum() 
+        
+        # --- THE CRITICAL FIX: DYNAMIC CUMULATIVE PNL ---
+        # cum_series = s_df['cumulative_pnl'].astype(float) # REMOVED stale DB reference
+        cum_series = s_df['pnl'].astype(float).cumsum()     # ADDED live dynamic sum
+        
         current_capital = eff_cap_series[-1] 
 
         # 5. Core Math (Non-Capital Dependent)
@@ -177,12 +181,12 @@ def run_expectancy_calc():
         else:
             ulcer_index = 0.0
 
-        # 3. Fat Tail (Worst day vs Average loss day) - CORRECTED
+        # 3. Fat Tail (Worst day vs Average loss day)
         avg_loss_val = float(np.mean(losses)) if len(losses) > 0 else 0.0
         worst_day_val = float(np.min(pnls)) if len(pnls) > 0 else 0.0
         fat_tail = round(float(abs(worst_day_val / avg_loss_val)), 1) if avg_loss_val > 0 else 0.0
 
-        # 4. Probabilistic Sharpe Ratio (PSR) - CORRECTED
+        # 4. Probabilistic Sharpe Ratio (PSR)
         probabilistic_sharpe = 0.0
         if len(dr_series) > 3 and vol > 0:
             mean_ret = dr_series.mean()
@@ -302,7 +306,6 @@ def run_expectancy_calc():
             "strategy_capital": current_capital,
             "deployment_status": str(strat['status']),
             "deployment_type": str(strat['deployment_type']),
-            # --- NEW UI TEAR SHEET JSON COLUMNS ---
             "advanced_risk_json": advanced_risk_payload,
             "drawdown_ledger_json": drawdown_ledger,
             "time_series_stats_json": time_series_stats_payload
