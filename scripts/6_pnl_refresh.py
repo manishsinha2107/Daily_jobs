@@ -105,10 +105,9 @@ def run_pnl_refresh():
     report_progress("running", msg_start)
     
     # 1. THE UNIFIED MASTER FETCH
-    # 1. THE UNIFIED MASTER FETCH (FILTERED FOR ACTIVE & LIVE AUTO)
     master_res = supabase.table("strategies").select(
         "strategy_id, strategy_name, strategy_full_name, status, deployment_type, strategy_grouping, trades_type, capital, index_name, user_name"
-    ).eq("status", "Active").execute()
+    ).execute()
     
     if not master_res.data:
         msg_none = "✅ No strategies found in master table."
@@ -261,6 +260,7 @@ def run_pnl_refresh():
         # --- TEMPORARILY COMMENTED OUT TO FORCE REPROCESSING ALL DATES ---
         # raw_strategy_records = [row for row in intraday_grouped[strat_id_str] if row['trade_date'] > strat_state['latest_date']]
         raw_strategy_records = intraday_grouped[strat_id_str]
+        # -----------------------------------------------------------------
         
         # THE DATE DEDUPLICATOR
         deduped_records = {}
@@ -305,12 +305,16 @@ def run_pnl_refresh():
                 daily_order_count = int(row.get('order_count') or 0)
                 daily_turnover = float(row.get('premium_turnover') or 0.0)
 
-                # HARD STOP: If P&L exists but turnover is missing, crash immediately
+                # HARD STOP: If P&L exists but turnover is missing, crash immediately ONLY for Live Auto
                 if daily_turnover == 0.0 and daily_final_pnl != 0.0:
-                    error_msg = f"❌ FATAL ERROR: premium_turnover missing for {strat_name} on {t_date_str}. Run Script 4 to backfill first."
-                    print(error_msg)
-                    report_progress("error", error_msg)
-                    raise ValueError(error_msg)
+                    if strat_meta.get('deployment_type') == 'Live Auto':
+                        error_msg = f"❌ FATAL ERROR: premium_turnover missing for {strat_name} on {t_date_str}. Run Script 4 to backfill first."
+                        print(error_msg)
+                        report_progress("error", error_msg)
+                        raise ValueError(error_msg)
+                    else:
+                        error_msg = f"⚠️ MISSING DATA: premium_turnover missing for {strat_name} on {t_date_str}."
+                        raise ValueError(error_msg)
 
                 # Apply Tax Math (Assuming NFO_OPT segment for options)
                 tax_rates = get_historical_tax(tax_lookup, 'NFO_OPT', t_date_str)
