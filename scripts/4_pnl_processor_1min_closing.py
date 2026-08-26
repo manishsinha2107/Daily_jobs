@@ -6,17 +6,6 @@ from supabase import create_client, Client
 
 import math
 
-def get_active_strategy_ids():
-    """Fetches a set of strategy_ids where status is 'Active'."""
-    try:
-        res = supabase.table("strategies").select("strategy_id").eq("status", "Active").execute()
-        if res.data:
-            return {int(row['strategy_id']) for row in res.data if row.get('strategy_id') is not None}
-        return set()
-    except Exception as e:
-        print(f"⚠️ Error fetching active strategies: {e}")
-        return set()
-
 def get_dynamic_freeze_limit(strat_id, trade_date):
     """Fetches the historically accurate freeze limit for a strategy's index."""
     try:
@@ -103,13 +92,6 @@ def calculate_intraday_pnl_1min_closing():
     report_progress("running", "🔍 Analyzing P&L queue...")
     
     raw_audit_data = fetch_all_verified_records()
-    
-    # --- NEW: FILTER FOR ACTIVE STRATEGIES ONLY ---
-    active_strat_ids = get_active_strategy_ids()
-    print(f"🟢 Found {len(active_strat_ids)} active strategies in the database.")
-    
-    raw_audit_data = [row for row in raw_audit_data if int(row['strategy_id']) in active_strat_ids]
-    # ---------------------------------------------
 
     # --- LOGGING POINT 1: Total Records ---
     print(f"📊 Total active records fetched from Supabase: {len(raw_audit_data)}")
