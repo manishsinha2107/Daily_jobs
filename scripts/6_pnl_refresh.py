@@ -191,11 +191,13 @@ def run_pnl_refresh():
 
         # PRODUCTION SAFETY: Only track and compute heavy daily intraday math loops for ACTIVE strategies
         if master_status == 'Active':
+            # --- START BACKFILL PATCH ---
             strategy_states[sid_str] = {
-                'latest_date': latest_date,
-                'cum_pnl': cum_pnl,
-                'peak_pnl': peak_pnl
+                'latest_date': '2000-01-01', # FORCED FOR BACKFILL
+                'cum_pnl': 0.0,              # FORCED FOR BACKFILL
+                'peak_pnl': 0.0              # FORCED FOR BACKFILL
             }
+            # --- END BACKFILL PATCH ---
             active_ids_int.append(sid)
             active_strategies[sid_str] = s
 
