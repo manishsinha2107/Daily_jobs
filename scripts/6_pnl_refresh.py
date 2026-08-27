@@ -299,6 +299,7 @@ def run_pnl_refresh():
                 daily_sell_fills = int(row.get('sell_fills') or 0)
                 daily_order_count = int(row.get('order_count') or 0)
                 daily_turnover = float(row.get('premium_turnover') or 0.0)
+                daily_base_qtys = row.get('base_qtys') or []
 
                 # HARD STOP: If P&L exists but turnover is missing, crash immediately ONLY for Live Auto
                 if daily_turnover == 0.0 and daily_final_pnl != 0.0:
@@ -387,6 +388,7 @@ def run_pnl_refresh():
                     "sell_fills": daily_sell_fills,
                     "order_count": daily_order_count,
                     "premium_turnover": round(daily_turnover, 2),
+                    "base_qtys": daily_base_qtys,
                     "estimated_costs": round(estimated_costs, 2),
                     "net_pnl": round(daily_net_pnl, 2),
                     "updated_at": datetime.now(timezone.utc).isoformat()
