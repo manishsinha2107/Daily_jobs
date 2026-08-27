@@ -91,6 +91,10 @@ def calculate_intraday_pnl_1min_closing():
     print("🔍 Fetching database state for 1-Min Closing Audit...")
     report_progress("running", "🔍 Analyzing P&L queue...")
     
+    # --- ADDED: Fetch Active Strategies list ---
+    active_strats_res = supabase.table("strategies").select("strategy_id").eq("status", "Active").execute()
+    active_strat_ids = [int(row['strategy_id']) for row in active_strats_res.data] if active_strats_res.data else []
+    
     raw_audit_data = fetch_all_verified_records()
     
     # --- LOGGING POINT 1: Total Records ---
@@ -105,7 +109,11 @@ def calculate_intraday_pnl_1min_closing():
     
     # --- LOGGING POINT 2: Filtered Pending ---
     df_pending = df_audit[df_audit['pnl_1min_status'] == 'pending']
-    print(f"📥 Pending P&L calculations: {len(df_pending)}")
+    
+    # --- ADDED: Filter df_pending to only include Active Strategies ---
+    df_pending = df_pending[df_pending['strategy_id'].astype(int).isin(active_strat_ids)]
+    
+    print(f"📥 Pending P&L calculations (Active Only): {len(df_pending)}")
 
     if df_pending.empty:
         print("🏁 All fetched records are already processed or skipped. Exiting.")
@@ -135,18 +143,18 @@ def calculate_intraday_pnl_1min_closing():
             report_progress("running", f"📈 [{processed_count}/{total_dates}] Processing Strat {strat_id} (Date: {t_date})...")
 
             try:
-                # --- PRE-CALCULATION CHECK ---
-                check = supabase.table("intraday_pnl_1min_closing") \
-                    .select("strategy_id") \
-                    .eq("strategy_id", strat_id) \
-                    .eq("trade_date", t_date) \
-                    .execute()
+                # --- PRE-CALCULATION CHECK (COMMENTED OUT FOR BACKFILL) ---
+                # check = supabase.table("intraday_pnl_1min_closing") \
+                #     .select("strategy_id") \
+                #     .eq("strategy_id", strat_id) \
+                #     .eq("trade_date", t_date) \
+                #     .execute()
 
-                if check.data:
-                    supabase.table("strategy_trades_verification").update({"pnl_1min_status": "completed"}) \
-                        .eq("strategy_id", strat_id).eq("trade_date", t_date).execute()
-                    print(f"  ⏭️ {t_date} | Already calculated. Status synced.")
-                    continue
+                # if check.data:
+                #     supabase.table("strategy_trades_verification").update({"pnl_1min_status": "completed"}) \
+                #         .eq("strategy_id", strat_id).eq("trade_date", t_date).execute()
+                #     print(f"  ⏭️ {t_date} | Already calculated. Status synced.")
+                #     continue
 
                 res = supabase.table("strategy_trades_verification").select("*") \
                     .eq("strategy_id", strat_id).eq("trade_date", t_date).execute()
