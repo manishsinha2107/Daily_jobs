@@ -181,6 +181,9 @@ def calculate_intraday_pnl_1min_closing():
                 # Group by exact execution time, instrument, and type to simulate distinct orders
                 grouped_trades = df_all.groupby(['txn_time', 'broker_symbol', 'txn_type'])['quantity'].apply(lambda x: x.astype(float).abs().sum())
                 daily_order_count = int(sum(math.ceil(qty / freeze_limit) for qty in grouped_trades))
+                
+                # --- ADDED: Extract base tranches for UI scaling ---
+                base_qtys_array = [int(qty) for qty in grouped_trades]
                 # --- END OF INJECTION ---
 
                 instruments = df_all['broker_symbol'].unique().tolist()
@@ -267,6 +270,7 @@ def calculate_intraday_pnl_1min_closing():
                             "sell_fills": daily_sell_fills,
                             "order_count": daily_order_count,
                             "premium_turnover": round(daily_turnover, 2),
+                            "base_qtys": base_qtys_array,
                             "updated_at": datetime.now().isoformat()
                         },
                         on_conflict="strategy_id, trade_date"
