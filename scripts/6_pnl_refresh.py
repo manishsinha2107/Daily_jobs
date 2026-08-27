@@ -152,7 +152,7 @@ def run_pnl_refresh():
             
             # CHECK A: Capital Mismatch (Soft Overwrite Trigger for active ones)
             if saved_cap != master_cap:
-                if master_status == 'Active':
+                if master_status == 'Archive':
                     print(f"   ⚠️ CAPITAL MISMATCH for Active ID {sid} (Saved: {saved_cap} | Master: {master_cap}). Forcing soft recalculation.")
                     latest_date = '2000-01-01'
                     cum_pnl = 0.0
