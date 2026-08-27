@@ -152,7 +152,7 @@ def run_pnl_refresh():
             
             # CHECK A: Capital Mismatch (Soft Overwrite Trigger for active ones)
             if saved_cap != master_cap:
-                if master_status == 'Archive':
+                if master_status == 'Active':
                     print(f"   ⚠️ CAPITAL MISMATCH for Active ID {sid} (Saved: {saved_cap} | Master: {master_cap}). Forcing soft recalculation.")
                     latest_date = '2000-01-01'
                     cum_pnl = 0.0
@@ -191,13 +191,11 @@ def run_pnl_refresh():
 
         # PRODUCTION SAFETY: Only track and compute heavy daily intraday math loops for ACTIVE strategies
         if master_status == 'Active':
-            # --- START BACKFILL PATCH ---
             strategy_states[sid_str] = {
-                'latest_date': '2000-01-01', # FORCED FOR BACKFILL
-                'cum_pnl': 0.0,              # FORCED FOR BACKFILL
-                'peak_pnl': 0.0              # FORCED FOR BACKFILL
+                'latest_date': latest_date,
+                'cum_pnl': cum_pnl,
+                'peak_pnl': peak_pnl
             }
-            # --- END BACKFILL PATCH ---
             active_ids_int.append(sid)
             active_strategies[sid_str] = s
 
