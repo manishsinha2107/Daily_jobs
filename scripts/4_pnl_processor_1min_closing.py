@@ -135,18 +135,18 @@ def calculate_intraday_pnl_1min_closing():
             report_progress("running", f"📈 [{processed_count}/{total_dates}] Processing Strat {strat_id} (Date: {t_date})...")
 
             try:
-                # --- PRE-CALCULATION CHECK ---
-                check = supabase.table("intraday_pnl_1min_closing") \
-                    .select("strategy_id") \
-                    .eq("strategy_id", strat_id) \
-                    .eq("trade_date", t_date) \
-                    .execute()
+                # --- PRE-CALCULATION CHECK (COMMENTED OUT FOR BACKFILL) ---
+                # check = supabase.table("intraday_pnl_1min_closing") \
+                #     .select("strategy_id") \
+                #     .eq("strategy_id", strat_id) \
+                #     .eq("trade_date", t_date) \
+                #     .execute()
 
-                if check.data:
-                    supabase.table("strategy_trades_verification").update({"pnl_1min_status": "completed"}) \
-                        .eq("strategy_id", strat_id).eq("trade_date", t_date).execute()
-                    print(f"  ⏭️ {t_date} | Already calculated. Status synced.")
-                    continue
+                # if check.data:
+                #     supabase.table("strategy_trades_verification").update({"pnl_1min_status": "completed"}) \
+                #         .eq("strategy_id", strat_id).eq("trade_date", t_date).execute()
+                #     print(f"  ⏭️ {t_date} | Already calculated. Status synced.")
+                #     continue
 
                 res = supabase.table("strategy_trades_verification").select("*") \
                     .eq("strategy_id", strat_id).eq("trade_date", t_date).execute()
