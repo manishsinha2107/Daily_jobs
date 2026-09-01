@@ -1,13 +1,16 @@
 name: 🔑 TradeTron Smart Downloader
 
 on:
-
   workflow_dispatch:
     # Allows manual trigger from the GitHub UI
 
 jobs:
   download-and-upload:
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        chunk_index: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
+      fail-fast: false
 
     steps:
       - name: 🛒 Checkout Repository
@@ -25,21 +28,23 @@ jobs:
           # Install Playwright browser and its system dependencies
           playwright install chromium --with-deps
           
-      - name: 🚀 Run Smart Downloader
+      - name: 🚀 Run Smart Downloader (Chunk ${{ matrix.chunk_index }})
         env:
           PYTHONUNBUFFERED: "1" # Ensures real-time logging
+          CHUNK_INDEX: ${{ matrix.chunk_index }}
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
           SOURCE_FOLDER: ${{ secrets.SOURCE_FOLDER }}
           GDRIVE_SERVICE_ACCOUNT_JSON: ${{ secrets.GDRIVE_SERVICE_ACCOUNT_JSON }}
         run: |
+          echo "🚀 Running Downloader Matrix Chunk ${{ matrix.chunk_index }}"
           python scripts/0_trade_downloader.py
 
       - name: 📁 Upload Logs (Optional)
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: execution-logs
+          name: execution-logs-chunk-${{ matrix.chunk_index }}
           path: |
             *.log
             # Add any error screenshots if you implement page.screenshot()
