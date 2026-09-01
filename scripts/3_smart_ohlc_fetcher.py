@@ -205,10 +205,22 @@ def run_smart_fetcher():
                     response = fyers_api.history(data=data)
                     
                     if response.get("s") == "ok":
-                        # If the fallback succeeds, update b_sym so it caches correctly
                         b_sym = monthly_sym
-                        # Also update the Verification table so downstream P&L scripts use the fixed string
-                        supabase.table("strategy_trades_verification").update({"broker_symbol": monthly_sym}).in_("id", ids_to_update).execute()
+                        
+                        # --- ENHANCEMENT: Fetch correct token for the fallback symbol ---
+                        fallback_token = supabase.table("broker_tokens").select("token_id").eq("tsym", monthly_sym).execute()
+                        if fallback_token.data:
+                            valid_token = fallback_token.data[0]['token_id']
+                            print(f"   🔍 [TOKEN RECOVERED] Found correct token {valid_token} for {monthly_sym}")
+                        else:
+                            valid_token = 0
+                            print(f"   ⚠️ [TOKEN MISSING] Not found in DB. Defaulting to 0 for {monthly_sym}")
+                        
+                        # Update Verification table with both the fixed string and the correct token
+                        supabase.table("strategy_trades_verification").update({
+                            "broker_symbol": monthly_sym,
+                            "token_id": valid_token
+                        }).in_("id", ids_to_update).execute()
 
             # --- PROCESS RESPONSE ---
             if response.get("s") == "ok":
