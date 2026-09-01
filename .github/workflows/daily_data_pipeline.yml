@@ -6,7 +6,42 @@ on:
     types: [trigger_data_pipeline]
 
 jobs:
+  parallel-downloader:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        chunk_index: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
+      fail-fast: false
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: Install Downloader Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install pandas supabase playwright google-api-python-client google-auth python-dotenv
+          playwright install chromium --with-deps
+
+      - name: Run Tradetron Downloader Matrix (Chunk ${{ matrix.chunk_index }})
+        env:
+          PYTHONPATH: ${{ github.workspace }}/scripts
+          PYTHONUNBUFFERED: "1"
+          CHUNK_INDEX: ${{ matrix.chunk_index }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+          GDRIVE_SERVICE_ACCOUNT_JSON: ${{ secrets.GDRIVE_SERVICE_ACCOUNT_JSON }}
+          SOURCE_FOLDER: ${{ secrets.SOURCE_FOLDER }}
+        run: |
+          echo "🚀 Running Downloader Matrix Chunk ${{ matrix.chunk_index }}"
+          python scripts/0_trade_downloader.py
+
   execute-pipeline:
+    needs: parallel-downloader
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Repository
@@ -53,9 +88,6 @@ jobs:
           MASTER_BOT_TOKEN: ${{ secrets.MASTER_BOT_TOKEN }}
           PERSONAL_CHANNEL_ID: ${{ secrets.PERSONAL_CHANNEL_ID }}
         run: |
-
-          echo "🚀 Step -1: Tradetron CSV Downloader (Playwright)"
-          python scripts/0_trade_downloader.py
 
           echo "🚀 Step 0: Trade Ingestor (Drive to Supabase Audit)"
           python scripts/0_trade_ingestor.py
