@@ -15,10 +15,8 @@ def log(msg):
     print(f"DEBUG: {msg}", flush=True)
 
 def update_heartbeat(status, msg):
-    # Default to "0" if running locally without the environment variable
     chunk_index = os.environ.get("CHUNK_INDEX", "0")
     step_id = f"pre_step_tt_{chunk_index}"
-    
     try:
         sb: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
         sb.table("engine_heartbeat").update({
@@ -58,7 +56,7 @@ def upload_to_drive(file_path, file_name):
             file = service.files().create(
                 body=file_metadata, 
                 media_body=media, 
-                fields='id',
+                fields='id', 
                 supportsAllDrives=True 
             ).execute()
             
@@ -90,30 +88,30 @@ async def run_smart_downloader():
     # Execute the final query
     res = query.execute()
     
-if not res.data:
+    if not res.data:
         update_heartbeat("success", "🏁 No active strategies found.")
         log("🏁 No strategies found.")
         return
 
     df = pd.DataFrame(res.data)
-    
+
     # --- MATRIX CHUNKING LOGIC ---
     chunk_index = int(os.environ.get("CHUNK_INDEX", "0"))
     total_chunks = 10
-    
+
     # Get unique emails and sort alphabetically for consistency across all runners
     unique_emails = sorted(df['user_email'].unique().tolist())
-    
+
     # Deal emails out to runners round-robin style
     assigned_emails = [email for i, email in enumerate(unique_emails) if i % total_chunks == chunk_index]
-    
+
     log(f"🧩 Runner {chunk_index} processing {len(assigned_emails)} emails out of {len(unique_emails)} total.")
-    
+
     if not assigned_emails:
         update_heartbeat("success", f"🏁 No emails assigned to chunk {chunk_index}.")
         log(f"🏁 No emails assigned to chunk {chunk_index}.")
         return
-        
+
     # Filter the primary dataframe to only process this chunk's assigned emails
     df = df[df['user_email'].isin(assigned_emails)]
     # --- END MATRIX LOGIC ---
