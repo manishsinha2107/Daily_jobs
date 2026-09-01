@@ -217,7 +217,8 @@ def calculate_intraday_pnl_1min_closing():
                         t_qty = int(abs(txn['quantity']))
 
                         if inst not in inventory or inventory[inst]['qty'] == 0:
-                            inventory[inst] = {'qty': t_qty, 'avg_price': t_price, 'side': 'LONG' if t_type == 'B' else 'SHORT'}
+                            # INJECTED: Seed 'last_price' memory with execution price
+                            inventory[inst] = {'qty': t_qty, 'avg_price': t_price, 'side': 'LONG' if t_type == 'B' else 'SHORT', 'last_price': t_price}
                         else:
                             inv = inventory[inst]
                             if (inv['side'] == 'LONG' and t_type == 'B') or (inv['side'] == 'SHORT' and t_type == 'S'):
@@ -232,6 +233,7 @@ def calculate_intraday_pnl_1min_closing():
                                     inv['side'] = 'SHORT' if inv['side'] == 'LONG' else 'LONG'
                                     inv['qty'] = excess_qty
                                     inv['avg_price'] = t_price
+                                    inv['last_price'] = t_price # INJECTED: Reset anchor on position flip
                                 else:
                                     pnl_mult = 1 if inv['side'] == 'LONG' else -1
                                     realized_pnl_bucket += (t_price - inv['avg_price']) * t_qty * pnl_mult
@@ -246,9 +248,14 @@ def calculate_intraday_pnl_1min_closing():
                         if data['qty'] > 0:
                             has_active_inventory = True
                             close_val = ohlc_lookup.get((inst, lookup_ts))
-                            if close_val:
-                                pnl_mult = 1 if data['side'] == 'LONG' else -1
-                                m_close += (close_val - data['avg_price']) * data['qty'] * pnl_mult
+                            
+                            # INJECTED: Update memory if the broker provided a candle
+                            if close_val is not None:
+                                data['last_price'] = close_val
+                                
+                            # INJECTED: Always calculate MTM using the memory (fresh candle or carry-forward)
+                            pnl_mult = 1 if data['side'] == 'LONG' else -1
+                            m_close += (data['last_price'] - data['avg_price']) * data['qty'] * pnl_mult
 
                     total_pnl = round(realized_pnl_bucket + m_close, 2)
                     pnl_series.append({
