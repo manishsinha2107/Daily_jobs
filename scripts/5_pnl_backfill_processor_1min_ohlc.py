@@ -48,13 +48,16 @@ def report_progress(status, msg):
         print(f"⚠️ Heartbeat update failed: {e}")
 
 def fetch_all_verified_records():
+    """Pagination-aware fetch for ONLY pending records."""
     all_data = []
     limit = 1000
     offset = 0
     while True:
+        # ✅ UPDATE: We filter for 'pending' directly in the query
         res = supabase.table("strategy_trades_verification") \
             .select("strategy_id, trade_date, pnl_status") \
-            .eq("pnl_status", "pending") \
+            .eq("pnl_1min_status", "pending") \
+            .in_("ohlc_status", ["verified_ohlc_present", "partial_ohlc_data"]) \
             .range(offset, offset + limit - 1) \
             .execute()
 
