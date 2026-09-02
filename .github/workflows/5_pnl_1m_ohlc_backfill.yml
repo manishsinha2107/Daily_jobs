@@ -1,4 +1,4 @@
-name: ⏱️ Step 5 - PnL Processor (1min OHLC) (10 Chunks)
+name: ⏱️ Step 5 - Backfill_PnL Processor (1min OHLC) (10 Chunks)
 on: [workflow_dispatch]
 jobs:
   run-script:
