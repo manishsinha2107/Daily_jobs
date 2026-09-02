@@ -55,7 +55,6 @@ def fetch_all_verified_records():
         res = supabase.table("strategy_trades_verification") \
             .select("strategy_id, trade_date, pnl_status") \
             .eq("pnl_status", "pending") \
-            .in_("ohlc_status", ["verified_ohlc_present", "partial_ohlc_data"]) \
             .range(offset, offset + limit - 1) \
             .execute()
 
