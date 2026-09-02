@@ -272,17 +272,20 @@ def calculate_high_fi_ohlc_pnl():
 
                 # 4. Upsert Results
                 if pnl_series:
-                    supabase.table("intraday_pnl_1min_ohlc").upsert({
-                        "strategy_id": int(strat_id), 
-                        "trade_date": t_date,
-                        "pnl_data": pnl_series, 
-                        "buy_fills": daily_buy_fills,
-                        "sell_fills": daily_sell_fills,
-                        "order_count": daily_order_count,
-                        "premium_turnover": round(daily_turnover, 2),
-                        "base_qtys": base_qtys_array,
-                        "updated_at": datetime.now().isoformat()
-                    }).execute()
+                    supabase.table("intraday_pnl_1min_ohlc").upsert(
+                        {
+                            "strategy_id": int(strat_id), 
+                            "trade_date": t_date,
+                            "pnl_data": pnl_series, 
+                            "buy_fills": daily_buy_fills,
+                            "sell_fills": daily_sell_fills,
+                            "order_count": daily_order_count,
+                            "premium_turnover": round(daily_turnover, 2),
+                            "base_qtys": base_qtys_array,
+                            "updated_at": datetime.now().isoformat()
+                        },
+                        on_conflict="strategy_id, trade_date"
+                    ).execute()
                     
                     supabase.table("strategy_trades_verification").update({"pnl_status": "completed"}) \
                         .eq("strategy_id", strat_id).eq("trade_date", t_date).execute()
