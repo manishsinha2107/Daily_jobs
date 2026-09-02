@@ -116,4 +116,7 @@ jobs:
           echo "🚀 Step 8: Social Media Post Update"
           python social_repo/scripts/4_personal_broadcast.py
 
+          echo "🚀 Step 9: OHLC Cache Cleanup (30-Day Purge)"
+          python scripts/Step8_cleanup_old_ohlc.py
+
           echo "✅ FULL PIPELINE COMPLETED SUCCESSFULLY!"
