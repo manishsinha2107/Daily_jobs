@@ -44,14 +44,15 @@ def cleanup_old_ohlc():
     report_progress("running", msg_start)
 
     try:
-        # Single bulk delete command to let the Postgres database handle it efficiently natively
+        # Bulk delete command with payload suppression (returning="minimal") 
+        # and exact count calculation (count="exact")
         res = supabase.table("market_ohlc_cache") \
-            .delete() \
+            .delete(returning="minimal", count="exact") \
             .lt("ts", f"{cutoff_date} 00:00:00") \
             .execute()
         
-        # Calculate total deleted based on the returned array
-        total_deleted = len(res.data) if res.data else 0
+        # Calculate total deleted based on the returned count metadata instead of data payload
+        total_deleted = res.count if res.count is not None else 0
 
     except Exception as e:
         print(f"❌ Error during cleanup: {e}")
