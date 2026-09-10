@@ -5,6 +5,7 @@ from dotenv import load_dotenv
 from supabase import create_client, Client
 
 import math
+import config
 
 def get_dynamic_freeze_limit(strat_id, trade_date):
     """Fetches the historically accurate freeze limit for a strategy's index."""
@@ -112,9 +113,16 @@ def calculate_intraday_pnl_1min_closing():
         report_progress("success", "🏁 All P&L tasks completed.")
         return
 
+    # Fetch valid strategy IDs based on deployment type rules in config.py
+    valid_strats_res = supabase.table("strategies").select("strategy_id").in_("deployment_type", config.DEPLOYMENT_TYPES).execute()
+    valid_strat_ids = {int(s['strategy_id']) for s in valid_strats_res.data}
+
     strategy_map = {}
     for _, row in df_pending.iterrows():
-        sid = row['strategy_id']
+        sid = int(row['strategy_id'])
+        # Skip backtest or unauthorized strategies
+        if sid not in valid_strat_ids:
+            continue
         if sid not in strategy_map: strategy_map[sid] = []
         strategy_map[sid].append(row['trade_date'])
 
