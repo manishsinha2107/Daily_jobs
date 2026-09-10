@@ -6,6 +6,7 @@ import numpy as np
 from datetime import datetime
 import urllib.request
 from supabase import create_client, Client
+import config
 
 # Authentication
 SUPABASE_URL = os.getenv("SUPABASE_URL")
@@ -51,13 +52,14 @@ def run_expectancy_calc():
     print("🚀 INITIALIZING STEP 7: EXPECTANCY UI REFRESH (Live Auto Only)")
     report_heartbeat("running", "📊 Computing Live Auto Stats...")
 
+
     # 1. Fetch Master Strategies FIRST
     df_strategies = fetch_all_paginated("strategies")
     
-    # 2. Strict Filtering: Active AND Live Auto
+    # 2. Strict Filtering: Active AND Config Whitelist
     eligible_strats = df_strategies[
         (df_strategies['status'] == 'Active') & 
-        (df_strategies['deployment_type'] == 'Live Auto')
+        (df_strategies['deployment_type'].isin(config.DEPLOYMENT_TYPES))
     ]
     
     active_ids = eligible_strats['strategy_id'].astype(int).tolist()
