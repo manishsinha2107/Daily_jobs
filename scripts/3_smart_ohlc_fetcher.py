@@ -9,6 +9,7 @@ from supabase import create_client, Client
 from dotenv import load_dotenv
 from collections import defaultdict
 from fyers_apiv3 import fyersModel
+import config
 
 # --- MIGRATION FIX: Local vs Cloud Environment ---
 if os.path.exists(".env"):
@@ -108,16 +109,24 @@ def run_smart_fetcher():
     
     ist = pytz.timezone('Asia/Kolkata')
 
+    # Fetch valid strategy IDs based on deployment type rules in config.py
+    valid_strats_res = supabase.table("strategies").select("strategy_id").in_("deployment_type", config.DEPLOYMENT_TYPES).execute()
+    valid_strat_ids = [int(s['strategy_id']) for s in valid_strats_res.data]
+
     # 1. FETCH SNAPSHOT
     pending_tasks = []
     offset = 0
     print("📡 Reading snapshot of trades requiring fresh OHLC verification...")
     while True:
+        if not valid_strat_ids:
+            break
+            
         # NOTE: Added 'instrument' to the select query to enable the fallback logic
         res = supabase.table("strategy_trades_verification") \
             .select("id, token_id, trade_date, instrument, broker_symbol, ohlc_status, strategy_id, strategy_name") \
             .eq("ohlc_status", "pending_api_search") \
             .eq("pnl_status", "pending") \
+            .in_("strategy_id", valid_strat_ids) \
             .range(offset, offset + 999).execute()
 
         if not res.data: break
