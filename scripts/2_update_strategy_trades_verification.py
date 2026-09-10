@@ -24,6 +24,7 @@ from dotenv import load_dotenv
 from supabase import create_client, Client
 from collections import defaultdict
 import time
+import config
 
 # Load .env (Local PyCharm) or use OS Environment (GitHub)
 load_dotenv()
@@ -105,11 +106,14 @@ def sync_audit_to_shadow():
         offset += 1000
     print(f"   - Found {len(existing_ids)} IDs already in Verification.")
 
-
     # 2. Fetch New Audit Rows (Filtered)
     print("\n📥 Step 2: Fetching Audit rows with status 'pending_ohlc'...")
     # --- REPORTING PROGRESS ---
     report_progress("running", f"📥 Fetching all pending Audit records...")
+
+    # Fetch valid strategy IDs based on deployment type rules in config.py
+    valid_strats_res = supabase.table("strategies").select("strategy_id").in_("deployment_type", config.DEPLOYMENT_TYPES).execute()
+    valid_strat_ids = {int(s['strategy_id']) for s in valid_strats_res.data}
     
     raw_pending_rows = []
     offset = 0
@@ -135,10 +139,16 @@ def sync_audit_to_shadow():
     stuck_ids = []
     
     for row in raw_pending_rows:
+        # Skip trades belonging to excluded deployment types (like BackTest)
+        if int(row['strategy_id']) not in valid_strat_ids:
+            continue
+            
         if row['id'] in existing_ids:
             stuck_ids.append(row['id'])
         else:
             batch_new.append(row)
+    
+    # SELF-HEALING PATCH: Instantly fix any rows that were trapped in a dirty state in chunks of 100
     
     # SELF-HEALING PATCH: Instantly fix any rows that were trapped in a dirty state in chunks of 100
     if stuck_ids:
