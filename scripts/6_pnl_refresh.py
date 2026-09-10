@@ -11,6 +11,7 @@ except ImportError:
     pass
 
 from supabase import create_client, Client
+import config
 
 # --- FORCE UNBUFFERED LOGGING FOR GITHUB ACTIONS ---
 def print(*args, **kwargs):
@@ -104,10 +105,10 @@ def run_pnl_refresh():
     print(msg_start)
     report_progress("running", msg_start)
     
-    # 1. THE UNIFIED MASTER FETCH
+    # 1. THE UNIFIED MASTER FETCH (Whitelisted by central config rules)
     master_res = supabase.table("strategies").select(
         "strategy_id, strategy_name, strategy_full_name, status, deployment_type, strategy_grouping, trades_type, capital, index_name, user_name"
-    ).execute()
+    ).in_("deployment_type", config.DEPLOYMENT_TYPES).execute()
     
     if not master_res.data:
         msg_none = "✅ No strategies found in master table."
