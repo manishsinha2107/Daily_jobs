@@ -24,6 +24,7 @@ import requests
 from google.oauth2 import service_account
 import google.auth.transport.requests
 from supabase import create_client, Client
+import config
 
 # --- CONFIGURATION ---
 SUPABASE_URL = os.environ.get("SUPABASE_URL")
@@ -57,7 +58,7 @@ def get_drive_token():
     return creds.token
 
 def get_active_strategies():
-    res = supabase.table("strategies").select("strategy_id,strategy_name").eq("status", "Active").execute()
+    res = supabase.table("strategies").select("strategy_id,strategy_name").eq("status", "Active").in_("deployment_type", config.DEPLOYMENT_TYPES).execute()
     data = res.data
     return {str(i['strategy_name']).strip(): str(i['strategy_id']) for i in data}, \
            {str(i['strategy_id']).strip(): str(i['strategy_id']) for i in data}
