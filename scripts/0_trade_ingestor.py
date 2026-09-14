@@ -58,9 +58,11 @@ def get_drive_token():
     return creds.token
 
 def get_active_strategies():
-    res = supabase.table("strategies").select("strategy_id,strategy_name").eq("status", "Active").in_("deployment_type", config.DEPLOYMENT_TYPES).execute()
+    # UPDATED: Changed strategy_name to strategy_full_name in the select query
+    res = supabase.table("strategies").select("strategy_id,strategy_full_name").eq("status", "Active").in_("deployment_type", config.DEPLOYMENT_TYPES).execute()
     data = res.data
-    return {str(i['strategy_name']).strip(): str(i['strategy_id']) for i in data}, \
+    # UPDATED: Mapping now uses strategy_full_name as the key
+    return {str(i['strategy_full_name']).strip(): str(i['strategy_id']) for i in data}, \
            {str(i['strategy_id']).strip(): str(i['strategy_id']) for i in data}
 
 def move_drive_file(file_id, file_name, token):
