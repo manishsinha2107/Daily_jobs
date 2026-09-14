@@ -75,8 +75,9 @@ async def run_smart_downloader():
     supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)    
     
     # Base query for Active strategies and Deployment Types
+    # UPDATED: Changed strategy_name to strategy_full_name
     query = supabase.table("strategies") \
-        .select("user_email, email_password, strategy_name, strategy_id, deployment_type") \
+        .select("user_email, email_password, strategy_full_name, strategy_id, deployment_type") \
         .eq("status", "Active") \
         .in_("deployment_type", config.DEPLOYMENT_TYPES)
         
@@ -149,7 +150,8 @@ async def run_smart_downloader():
                     await page.wait_for_selector('#search_input', timeout=60000)
 
                     for _, row in group.iterrows():
-                        strat_name = str(row['strategy_name']).strip()
+                        # UPDATED: Pulling from strategy_full_name instead of strategy_name
+                        strat_name = str(row['strategy_full_name']).strip()
                         log(f"🔍 Searching Strategy: {strat_name}")
                         
                         await page.locator('#search_input').fill("")
