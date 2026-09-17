@@ -35,57 +35,13 @@ def report_progress(status, msg):
     except Exception as e:
         print(f"⚠️ Heartbeat update failed: {e}")
 
+
+# --- NEW: Import Centralized Auth ---
+from fyers_auth import get_fyers_access_token
+
 # Initialize Fyers Constants from Environment Variables
-FY_ID = os.getenv("FYERS_USERNAME")
+# (We keep APP_ID because the script still uses it locally to initialize fyersModel)
 APP_ID = os.getenv("FYERS_APP_ID")
-SECRET_ID = os.getenv("FYERS_SECRET_ID")
-PIN = os.getenv("FYERS_PIN")
-TOTP_KEY = os.getenv("FYERS_TOTP_KEY")
-REDIRECT_URL = "https://trade.fyers.in/api-login/redirect-uri/index.html"
-
-def get_fyers_access_token():
-    """Headless Authentication Flow for Fyers"""
-    s = requests.Session()
-    headers = {'Accept': 'application/json', 'Content-Type': 'application/json'}
-    try:
-        payload1 = {"fy_id": base64.b64encode(FY_ID.encode()).decode(), "app_id": "2"}
-        r1 = s.post("https://api-t2.fyers.in/vagator/v2/send_login_otp_v2", json=payload1, headers=headers).json()
-        req_key = r1.get('request_key')
-
-        otp = pyotp.TOTP(TOTP_KEY).now()
-        r2 = s.post("https://api-t2.fyers.in/vagator/v2/verify_otp", json={"request_key": req_key, "otp": otp}, headers=headers).json()
-        req_key = r2.get('request_key')
-
-        payload3 = {"request_key": req_key, "identity_type": "pin", "identifier": base64.b64encode(PIN.encode()).decode()}
-        r3 = s.post("https://api-t2.fyers.in/vagator/v2/verify_pin_v2", json=payload3, headers=headers).json()
-        token_v2 = r3['data']['access_token']
-
-        short_app_id = APP_ID.split('-')[0]
-        headers_auth = {'Authorization': f'Bearer {token_v2}', 'Content-Type': 'application/json'}
-        payload4 = {
-            "fyers_id": FY_ID, "app_id": short_app_id, "redirect_uri": REDIRECT_URL, 
-            "appType": "100", "response_type": "code", "state": "abcdefg"
-        }
-        r4 = s.post("https://api-t1.fyers.in/api/v3/token", json=payload4, headers=headers_auth).json()
-        
-        if 'Url' in r4:
-            auth_code = r4['Url'].split('auth_code=')[1].split('&')[0]
-        else:
-            return None
-
-        session = fyersModel.SessionModel(
-            client_id=APP_ID, secret_key=SECRET_ID, redirect_uri=REDIRECT_URL, 
-            response_type="code", grant_type="authorization_code"
-        )
-        session.set_token(auth_code)
-        response = session.generate_token()
-        
-        if response.get("s") == "ok" and "access_token" in response:
-            return response["access_token"]
-        return None
-    except Exception as e:
-        print(f"⚠️ Auth Exception: {str(e)}")
-        return None
 
 def get_monthly_fyers_tsym(inst_name):
     """Fallback Translator: Explicitly forces the Fyers Monthly Format"""
