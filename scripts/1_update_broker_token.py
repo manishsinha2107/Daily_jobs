@@ -5,6 +5,9 @@ from datetime import datetime
 from dotenv import load_dotenv
 from supabase import create_client, Client
 
+# --- NEW: Import Centralized Auth ---
+from fyers_auth import get_fyers_access_token
+
 # --- INITIALIZATION ---
 load_dotenv()
 url = os.getenv("SUPABASE_URL")
@@ -30,9 +33,18 @@ def report_progress(status, msg):
 
 def sync_fyers_tokens():
     print("🔄 Syncing Native Fyers Tokens (Daily Update)...")
-    report_progress("running", "📡 Downloading Fyers Master CSV...")
     
-    # 1. Download Fyers NSE F&O Master CSV
+    # --- 0. AUTHENTICATION INJECTION ---
+    report_progress("running", "🔑 Securing Fyers 15-Hour Session Token...")
+    token = get_fyers_access_token(silent=False)
+    if token:
+        report_progress("running", "✅ Fyers session secured in Vault.")
+    else:
+        report_progress("error", "❌ Failed to secure Fyers session. Subsequent steps may fail.")
+        # We allow the script to continue to at least fetch the CSV
+    
+    # --- 1. Download Fyers NSE F&O Master CSV ---
+    report_progress("running", "📡 Downloading Fyers Master CSV...")
     csv_url = "https://public.fyers.in/sym_details/NSE_FO.csv"
     try:
         df = pd.read_csv(csv_url, header=None)
@@ -42,7 +54,7 @@ def sync_fyers_tokens():
         report_progress("error", err_msg)
         return
 
-    # 2. Filter for Options (Index 14 represents Options in Fyers schema)
+    # --- 2. Filter for Options --- (Index 14 represents Options in Fyers schema)
     target_indices = ['NIFTY', 'BANKNIFTY', 'FINNIFTY', 'MIDCPNIFTY']
     options_df = df[
         (df[13].isin(target_indices)) & 
@@ -53,7 +65,7 @@ def sync_fyers_tokens():
     print(f"📥 Found {found_count} Active Options Contracts.")
     report_progress("running", f"📥 Found {found_count} contracts. Upserting...")
 
-    # 3. Prepare payload for Supabase
+    # --- 3. Prepare payload for Supabase ---
     payload = []
     for _, row in options_df.iterrows():
         payload.append({
@@ -64,7 +76,7 @@ def sync_fyers_tokens():
             "is_historical": False
         })
 
-    # 4. Bulk Upsert in batches of 1000
+    # --- 4. Bulk Upsert in batches of 1000 ---
     try:
         print(f"🚀 Upserting {len(payload)} native Fyers tokens...")
         for i in range(0, len(payload), 1000):
@@ -76,7 +88,7 @@ def sync_fyers_tokens():
             report_progress("running", progress_msg)
 
         print("✅ Daily Broker Token Sync Complete!")
-        report_progress("success", f"✅ Successfully synced {found_count} tokens.")
+        report_progress("success", f"✅ Successfully secured session & synced {found_count} tokens.")
         
     except Exception as e:
         err_msg = f"❌ Upsert Failed: {str(e)[:50]}"
