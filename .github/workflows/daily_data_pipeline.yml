@@ -38,7 +38,7 @@ jobs:
           SOURCE_FOLDER: ${{ secrets.SOURCE_FOLDER }}
         run: |
           echo "🚀 Running Downloader Matrix Chunk ${{ matrix.chunk_index }}"
-          python scripts/0_trade_downloader.py
+          #python scripts/0_trade_downloader.py
 
   execute-pipeline:
     needs: parallel-downloader
