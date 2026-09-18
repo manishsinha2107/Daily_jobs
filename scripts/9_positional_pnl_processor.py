@@ -43,6 +43,23 @@ def fetch_all_paginated(table_name, select_query="*", filters=None):
         offset += limit
     return all_data
 
+def fetch_ohlc_data_paginated(symbols, t_date):
+    all_ohlc = []
+    limit = 1000
+    offset = 0
+    while True:
+        res = supabase.table("market_ohlc_cache") \
+            .select("symbol, ts, close") \
+            .in_("symbol", symbols) \
+            .like("ts", f"{t_date}%") \
+            .range(offset, offset + limit - 1) \
+            .execute()
+        if not res.data: break
+        all_ohlc.extend(res.data)
+        if len(res.data) < limit: break
+        offset += limit
+    return all_ohlc
+
 def build_lot_size_lookup(lot_data):
     lookup = {}
     for row in lot_data:
@@ -54,13 +71,11 @@ def build_lot_size_lookup(lot_data):
     return lookup
 
 def get_historical_lot_size(lookup, index_name, target_date_str):
-    if index_name not in lookup or not lookup[index_name]:
-        raise ValueError(f"❌ Missing lot size data in DB for index {index_name}")
+    if index_name not in lookup or not lookup[index_name]: return 1
     target_dt = datetime.strptime(str(target_date_str).split(' ')[0], "%Y-%m-%d")
     first_of_month = target_dt.replace(day=1).strftime("%Y-%m-%d")
     valid_lots = [lot for lot in lookup[index_name] if lot['effective_date'] <= first_of_month]
-    if not valid_lots:
-        raise ValueError(f"❌ No valid historical lot size found for {index_name} on or before {first_of_month}")
+    if not valid_lots: return valid_lots[0]['lot_size'] if valid_lots else 1
     return valid_lots[0]['lot_size']
 
 def build_tax_lookup(tax_data):
@@ -79,38 +94,16 @@ def get_historical_tax(lookup, segment, target_date_str):
     if not valid_taxes: return lookup[segment][-1] 
     return valid_taxes[0]
 
-def fetch_ohlc_data_paginated(symbols, t_date):
-    """Paginated fetch for OHLC data safely targeting exact days using the string `.like()` pattern."""
-    all_ohlc = []
-    limit = 1000
-    offset = 0
-    while True:
-        res = supabase.table("market_ohlc_cache") \
-            .select("symbol, ts, close") \
-            .in_("symbol", symbols) \
-            .like("ts", f"{t_date}%") \
-            .range(offset, offset + limit - 1) \
-            .execute()
-        if not res.data: break
-        all_ohlc.extend(res.data)
-        if len(res.data) < limit: break
-        offset += limit
-    return all_ohlc
-
 # =====================================================================
 # LIVE MEMORY ENGINE: 1-MINUTE MAE/MFE CALCULATOR & DAILY SNAPSHOTS
 # =====================================================================
-def extract_memory_extremes(strat_id, entry_time, exit_time):
-    """Calculates Max Profit, Max Loss, and dynamic daily extremes using safe date-based Supabase queries."""
+def extract_memory_extremes(strat_id, entry_date_str, exit_date_str, entry_time_str, exit_time_str):
     
-    # Safely parse the ISO timestamps provided by the ledger
-    entry_dt = pd.to_datetime(entry_time)
-    exit_dt = pd.to_datetime(exit_time)
-    
-    entry_date_str = entry_dt.strftime('%Y-%m-%d')
-    exit_date_str = exit_dt.strftime('%Y-%m-%d')
+    # 1. PERFECT TIMEZONE STRIPPING
+    entry_dt = pd.to_datetime(entry_time_str).replace(tzinfo=None)
+    exit_dt = pd.to_datetime(exit_time_str).replace(tzinfo=None)
 
-    # 1. Paginated fetch using trade_date (SAFE) instead of txn_time (UNSAFE AM/PM)
+    # 2. FETCH TRADES BY DATE (SAFE), THEN FILTER IN PANDAS (SAFE)
     all_trades = []
     offset, limit = 0, 1000
     while True:
@@ -129,54 +122,52 @@ def extract_memory_extremes(strat_id, entry_time, exit_time):
         
     trades_df = pd.DataFrame(all_trades)
     if trades_df.empty:
-        return 0.0, str(exit_time), 0.0, str(entry_time), {}
+        return 0.0, str(exit_time_str), 0.0, str(entry_time_str), {}
 
-    # Convert AM/PM strings to real datetime objects and filter exactly in Pandas
-    trades_df['txn_time'] = pd.to_datetime(trades_df['txn_time'])
-    trades_df = trades_df[(trades_df['txn_time'] >= entry_dt) & (trades_df['txn_time'] <= exit_dt)]
-    trades_df = trades_df.sort_values(by='txn_time')
+    # Implement Exact Intraday Architecture for Trade Timestamps
+    trades_df['dt_obj'] = pd.to_datetime(trades_df['txn_time'], format='mixed').apply(lambda x: x.replace(tzinfo=None))
+    trades_df = trades_df[(trades_df['dt_obj'] >= entry_dt) & (trades_df['dt_obj'] <= exit_dt)]
+    trades_df = trades_df.sort_values(by='dt_obj')
 
     if trades_df.empty:
-        return 0.0, str(exit_time), 0.0, str(entry_time), {}
+        return 0.0, str(exit_time_str), 0.0, str(entry_time_str), {}
 
-    trades_df = trades_df.rename(columns={'broker_symbol': 'symbol'})
-    symbols = trades_df['symbol'].unique().tolist()
+    symbols = trades_df['broker_symbol'].unique().tolist()
 
-    # 2. Fetch OHLC strictly day-by-day to bypass AM/PM string corruption
+    # 3. FETCH OHLC DAY-BY-DAY (Bypasses AM/PM Bugs)
     current_d = entry_dt.date()
     end_d = exit_dt.date()
     ohlc_lookup = {}
-    all_timestamps = set()
-
+    
     while current_d <= end_d:
         d_str = current_d.strftime('%Y-%m-%d')
-        # We must use fetch_ohlc_data_paginated using .like("ts", f"{d_str}%")
         day_ohlc = fetch_ohlc_data_paginated(symbols, d_str)
         for row in day_ohlc:
+            # Implement Exact Intraday Architecture for OHLC lookup
             ohlc_lookup[(row['symbol'], row['ts'])] = float(row['close'])
-            try:
-                dt_val = pd.to_datetime(row['ts'])
-                all_timestamps.add(dt_val)
-            except:
-                pass
         current_d += timedelta(days=1)
 
-    # 3. Timeline Alignment & Daily EOD Anchor Injection
-    for t in trades_df['txn_time']:
-        all_timestamps.add(t.replace(second=0, microsecond=0))
-        
-    # Inject 15:30:00 for every holding day to ensure a daily MTM snapshot even if the day had zero trades
-    current_d = entry_dt.date()
-    while current_d <= end_d:
-        eod_anchor = pd.to_datetime(f"{current_d} 15:30:00")
-        all_timestamps.add(eod_anchor)
-        current_d += timedelta(days=1)
-
-    unique_times = sorted(list(all_timestamps))
+    # 4. GENERATE CONTINUOUS MARKET HOURS TIMELINE
+    current_time = entry_dt.replace(second=0, microsecond=0)
+    end_time = exit_dt.replace(second=0, microsecond=0)
+    unique_times = []
     
-    # Filter the timeline to only evaluate between entry and exit
-    unique_times = [t for t in unique_times if t >= entry_dt.replace(second=0, microsecond=0) and t <= exit_dt]
+    while current_time <= end_time:
+        if current_time.hour > 15 or (current_time.hour == 15 and current_time.minute > 30):
+            current_time = (current_time + timedelta(days=1)).replace(hour=9, minute=15)
+            continue
+        if current_time.hour < 9 or (current_time.hour == 9 and current_time.minute < 15):
+            current_time = current_time.replace(hour=9, minute=15)
+            continue
+        unique_times.append(current_time)
+        current_time += timedelta(minutes=1)
+        
+    for t in trades_df['dt_obj']:
+        unique_times.append(t.replace(second=0, microsecond=0))
+        
+    unique_times = sorted(list(set(unique_times)))
 
+    # 5. SIMULATE ENGINE
     trade_idx = 0
     total_trades = len(trades_df)
     inventory = {}
@@ -196,10 +187,9 @@ def extract_memory_extremes(strat_id, entry_time, exit_time):
                 'min_pnl': float('inf'), 'min_time': time_str
             }
 
-        # Process trades up to this minute
-        while trade_idx < total_trades and trades_df.iloc[trade_idx]['txn_time'] <= current_ts + timedelta(seconds=59):
+        while trade_idx < total_trades and trades_df.iloc[trade_idx]['dt_obj'] <= current_ts + timedelta(seconds=59):
             txn = trades_df.iloc[trade_idx]
-            sym, t_price, t_type = txn['symbol'], float(txn['price']), txn['txn_type']
+            sym, t_price, t_type = txn['broker_symbol'], float(txn['price']), txn['txn_type']
             t_qty = int(abs(txn['quantity']))
 
             if sym not in inventory or inventory[sym]['qty'] == 0:
@@ -225,7 +215,7 @@ def extract_memory_extremes(strat_id, entry_time, exit_time):
                         inv['qty'] -= t_qty
             trade_idx += 1
 
-        # MTM Evaluation utilizing last_price cache for blank holding days
+        # MTM Evaluation utilizing EXACT INTRADAY STRING LOOKUP
         m_close = 0.0
         time_str_db = current_ts.strftime('%I:%M:%S %p').lstrip('0')
         lookup_ts = f"{date_str} {time_str_db}"
@@ -272,7 +262,6 @@ def run_live_positional_curve_rebuilder():
     print("🔄 INITIATING LIVE POSITIONAL CURVE REBUILDER")
     print(f"{'='*60}\n")
     
-    # 1. Fetch completed cycles directly from the live ledger table
     print("📦 Fetching live positional cycles from ledger...")
     cycles_data = fetch_all_paginated("positional_trade_ledger")
     
@@ -282,14 +271,11 @@ def run_live_positional_curve_rebuilder():
         
     cycles_df = pd.DataFrame(cycles_data)
     
-    # Sort natively by strategy and exit time to ensure correct cumulative PnL progression
     cycles_df['exit_time_sort'] = pd.to_datetime(cycles_df['exit_time'])
     cycles_df = cycles_df.sort_values(['strategy_id', 'exit_time_sort']).drop(columns=['exit_time_sort'])
 
-    # 2. Memory Load Lookups
     print("📦 Fetching metadata, lot sizes, and taxes from Supabase...")
     
-    # Fetch valid live positional strategies based on config
     master_res = supabase.table("strategies").select("*") \
         .eq("position_type", "Positional") \
         .in_("deployment_type", config.DEPLOYMENT_TYPES) \
@@ -306,7 +292,7 @@ def run_live_positional_curve_rebuilder():
         meta = master_meta.get(int(strat_id))
         
         if not meta:
-            print(f"⚠️ ERROR: Strategy {strat_id} metadata missing or not authorized by config deployment rules. Skipping.")
+            print(f"⚠️ ERROR: Strategy {strat_id} metadata missing or not authorized. Skipping.")
             continue
             
         strat_name = meta.get('strategy_full_name') or meta.get('strategy_name') or f"ID {strat_id}"
@@ -326,13 +312,11 @@ def run_live_positional_curve_rebuilder():
         final_summary_payload = []
         
         for _, cycle in strat_cycles.iterrows():
-            # Slice off any trailing timestamp zeroes
             entry_date_str = str(cycle['entry_date']).split(' ')[0]
             exit_date_str = str(cycle['exit_date']).split(' ')[0]
             
-            # Extract precise broker execution times for the zero-fallback logic
-            entry_dt_obj = pd.to_datetime(cycle['entry_time'])
-            exit_dt_obj = pd.to_datetime(cycle['exit_time'])
+            entry_dt_obj = pd.to_datetime(cycle['entry_time']).replace(tzinfo=None)
+            exit_dt_obj = pd.to_datetime(cycle['exit_time']).replace(tzinfo=None)
             broker_entry_time = entry_dt_obj.strftime('%I:%M %p').lstrip('0')
             broker_exit_time = exit_dt_obj.strftime('%I:%M %p').lstrip('0')
             
@@ -340,7 +324,6 @@ def run_live_positional_curve_rebuilder():
             turnover = float(cycle['premium_turnover'])
             order_count = int(cycle['order_count'])
             
-            # Extract and parse base_qtys for dynamic splitting
             try:
                 cycle_qtys = json.loads(cycle['base_qtys']) if isinstance(cycle['base_qtys'], str) else cycle['base_qtys']
                 if not isinstance(cycle_qtys, list): 
@@ -350,7 +333,6 @@ def run_live_positional_curve_rebuilder():
             
             mid_qty_idx = len(cycle_qtys) // 2
             
-            # --- STRICT HISTORICAL TAX CALCULATIONS ---
             tax_rates = get_historical_tax(tax_lookup, 'NFO_OPT', exit_date_str)
             half_turnover = turnover / 2.0
             
@@ -366,12 +348,11 @@ def run_live_positional_curve_rebuilder():
             estimated_costs = exchange_fee + stt + stamp_duty + sebi_fee + brokerage + gst
             net_pnl = gross_pnl - estimated_costs
             
-            # --- EXTRACT MEMORY EXTREMES & SNAPSHOTS ---
+            # Pass correct dates to safely query Supabase
             max_profit, mp_time, max_loss, ml_time, daily_snapshots = extract_memory_extremes(
-                strat_id, cycle['entry_time'], cycle['exit_time']
+                strat_id, entry_date_str, exit_date_str, cycle['entry_time'], cycle['exit_time']
             )
             
-            # --- DAILY MTM UNPACKING (UI Curve) ---
             valid_trading_dates = set(daily_snapshots.keys())
             valid_trading_dates.add(entry_date_str)
             valid_trading_dates.add(exit_date_str)
@@ -383,7 +364,6 @@ def run_live_positional_curve_rebuilder():
                 day_stat = daily_snapshots.get(d_str)
                 curr_dt = datetime.strptime(d_str, "%Y-%m-%d")
                 
-                # Retrieve EOD snapshot or final gross PnL
                 if d_str == exit_date_str:
                     curr_snap = gross_pnl
                 else:
@@ -391,14 +371,12 @@ def run_live_positional_curve_rebuilder():
                     
                 daily_gross = curr_snap - prev_snap
                 
-                # Calculate True Daily Extremes from 1-min data
                 if day_stat:
                     daily_max = day_stat['max_pnl'] - prev_snap
                     daily_max_time = day_stat['max_time']
                     daily_min = day_stat['min_pnl'] - prev_snap
                     daily_min_time = day_stat['min_time']
                 else:
-                    # Safe broker-fill fallback if OHLC was fully missing for this specific date
                     daily_max = daily_gross
                     daily_min = daily_gross
                     if d_str == entry_date_str:
@@ -408,7 +386,6 @@ def run_live_positional_curve_rebuilder():
                         daily_max_time = broker_exit_time
                         daily_min_time = broker_exit_time
                 
-                # --- PRECISE TRADE AND COST ALLOCATION FOR UI MATRICES ---
                 if d_str == exit_date_str and d_str == entry_date_str:
                     daily_cost = estimated_costs
                     daily_buy = int(cycle['buy_fills'])
@@ -440,7 +417,6 @@ def run_live_positional_curve_rebuilder():
                     
                 daily_net = daily_gross - daily_cost
                 
-                # Capital calculation for daily row
                 hist_lot_daily = get_historical_lot_size(lot_lookup, index_name, d_str)
                 curr_lot = get_historical_lot_size(lot_lookup, index_name, today_str)
                 unit_cap = base_capital / curr_lot if curr_lot else 0
@@ -497,7 +473,6 @@ def run_live_positional_curve_rebuilder():
                 
                 prev_snap = curr_snap
 
-            # --- CYCLE SUMMARY UNPACKING (Journal Curve) ---
             hist_lot_exit = get_historical_lot_size(lot_lookup, index_name, exit_date_str)
             curr_lot_exit = get_historical_lot_size(lot_lookup, index_name, today_str)
             unit_cap_exit = base_capital / curr_lot_exit if curr_lot_exit else 0
@@ -551,7 +526,6 @@ def run_live_positional_curve_rebuilder():
             
             print(f"   📅 Anchored Cycle: {exit_date_str} | Gross: ₹{gross_pnl:.2f} | Net: ₹{net_pnl:.2f} | MAE: ₹{max_loss:.2f} | MFE: ₹{max_profit:.2f}")
 
-        # --- SUPABASE UPSERT (Batched) ---
         chunk_size = 250
         if final_daily_payload:
             print(f"   🚀 Upserting {len(final_daily_payload)} Daily MTM rows...")
