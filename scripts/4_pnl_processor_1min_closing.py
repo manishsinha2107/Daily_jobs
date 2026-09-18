@@ -114,7 +114,11 @@ def calculate_intraday_pnl_1min_closing():
         return
 
     # Fetch valid strategy IDs based on deployment type rules in config.py
-    valid_strats_res = supabase.table("strategies").select("strategy_id").in_("deployment_type", config.DEPLOYMENT_TYPES).execute()
+
+    valid_strats_res = supabase.table("strategies").select("strategy_id") \
+        .in_("deployment_type", config.DEPLOYMENT_TYPES) \
+        .eq("position_type", "Intraday") \
+        .execute()
     valid_strat_ids = {int(s['strategy_id']) for s in valid_strats_res.data}
 
     strategy_map = {}
