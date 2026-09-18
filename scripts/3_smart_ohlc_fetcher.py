@@ -3,7 +3,7 @@ import pyotp
 import base64
 import requests
 import pandas as pd
-from datetime import datetime
+from datetime import datetime, timedelta
 import pytz
 from supabase import create_client, Client
 from dotenv import load_dotenv
@@ -60,26 +60,49 @@ def get_monthly_fyers_tsym(inst_name):
         return None
 
 def run_smart_fetcher():
-    print("🚀 Starting Smart OHLC Fetcher (Date-Symbol-Strategy Grouping)...")
-    report_progress("running", "📡 Reading pending OHLC tasks...")
-    
+    print("🚀 Starting Smart OHLC Fetcher (Stateful Positional + Intraday)...")
     ist = pytz.timezone('Asia/Kolkata')
+    today_dt = datetime.now(ist)
+    today_str = today_dt.strftime('%Y-%m-%d')
+    
+    report_progress("running", "📡 Initializing Stateful Positional Fetcher...")
 
-    # Fetch valid strategy IDs based on deployment type rules in config.py
+    # 1. FETCH VALID STRATEGIES
     valid_strats_res = supabase.table("strategies").select("strategy_id").in_("deployment_type", config.DEPLOYMENT_TYPES).execute()
     valid_strat_ids = [int(s['strategy_id']) for s in valid_strats_res.data]
+    
+    if not valid_strat_ids:
+        print("✅ No valid strategies for deployment type.")
+        return
 
-    # 1. FETCH SNAPSHOT
+    # --- 2. BUILD THE UNIFIED TARGET QUEUE ---
+    # target_queue[symbol] = {'start_date': 'YYYY-MM-DD', 'instrument': '...', 'linked_ids': set()}
+    target_queue = {}
+    
+    # A. Ingest Active Positional Memory
+    mem_res = supabase.table("multi_indices_ohlc_harvest_memory").select("*").gte("expiry_date", today_str).execute()
+    for row in mem_res.data:
+        sym = row['symbol']
+        lh = row.get('last_harvested_date')
+        
+        if not lh:
+            s_date = today_str
+        elif lh < today_str:
+            # Fetch from the day after the last successful harvest
+            lh_dt = datetime.strptime(lh, '%Y-%m-%d')
+            s_date = (lh_dt + timedelta(days=1)).strftime('%Y-%m-%d')
+        else:
+            # Even if up to date, we process today to ensure we get the latest intraday candles
+            s_date = today_str 
+            
+        target_queue[sym] = {'start_date': s_date, 'instrument': row.get('instrument_type', ''), 'linked_ids': set()}
+
+    # B. Ingest Pending Verification Trades
     pending_tasks = []
     offset = 0
-    print("📡 Reading snapshot of trades requiring fresh OHLC verification...")
     while True:
-        if not valid_strat_ids:
-            break
-            
-        # NOTE: Added 'instrument' to the select query to enable the fallback logic
         res = supabase.table("strategy_trades_verification") \
-            .select("id, token_id, trade_date, instrument, broker_symbol, ohlc_status, strategy_id, strategy_name") \
+            .select("id, token_id, trade_date, instrument, broker_symbol, ohlc_status, strategy_id") \
             .eq("ohlc_status", "pending_api_search") \
             .eq("pnl_status", "pending") \
             .in_("strategy_id", valid_strat_ids) \
@@ -90,51 +113,67 @@ def run_smart_fetcher():
         if len(res.data) < 1000: break
         offset += 1000
 
-    if not pending_tasks:
-        print("✅ No trades pending verification.")
+    for task in pending_tasks:
+        b_sym = task['broker_symbol']
+        t_date = task['trade_date']
+        
+        if b_sym in target_queue:
+            # If the trade date is older than the memory start date, stretch the window back
+            if t_date < target_queue[b_sym]['start_date']:
+                target_queue[b_sym]['start_date'] = t_date
+            target_queue[b_sym]['linked_ids'].add(task['id'])
+            if not target_queue[b_sym]['instrument']:
+                target_queue[b_sym]['instrument'] = task.get('instrument', '')
+        else:
+            target_queue[b_sym] = {
+                'start_date': t_date,
+                'instrument': task.get('instrument', ''),
+                'linked_ids': {task['id']}
+            }
+
+    if not target_queue:
+        print("✅ No active memory or pending trades found.")
         report_progress("success", "✅ No pending tasks found.")
         return
 
-    # --- ENHANCED LOGIC: GROUP BY DATE + SYMBOL + INSTRUMENT + STRATEGY_ID ---
-    task_groups = defaultdict(list)
-    for task in pending_tasks:
-        key = (task['trade_date'], task['broker_symbol'], task['instrument'], task['strategy_id'])
-        task_groups[key].append(task)
-
-    print(f"📦 Found {len(pending_tasks)} trade rows across {len(task_groups)} unique Date-Symbol-Strategy groups.")
-    report_progress("running", f"📦 Processing {len(task_groups)} OHLC groups...")
+    print(f"📦 Assembled {len(target_queue)} unique symbols for Positional/Intraday sync.")
+    report_progress("running", f"📦 Processing {len(target_queue)} target symbols...")
     print("-" * 100)
 
+    # --- 3. EXECUTE DELTA FETCH ---
     fyers_api = None
     group_idx = 0
-    total_groups = len(task_groups)
+    total_groups = len(target_queue)
+    successful_memory_commits = {}
 
-    for (t_date, b_sym, t_inst, s_id), rows in task_groups.items():
+    for b_sym, queue_data in target_queue.items():
         group_idx += 1
-        s_name = rows[0].get('strategy_name', 'Unknown')
-        valid_token = next((r['token_id'] for r in rows if r['token_id']), None)
-        ids_to_update = [r['id'] for r in rows]
+        s_date = queue_data['start_date']
+        t_inst = queue_data['instrument']
+        ids_to_update = list(queue_data['linked_ids'])
+        
+        # Safety Protocol: Cap maximum fetch to 99 days (Fyers Limit is 100)
+        s_dt = datetime.strptime(s_date, '%Y-%m-%d')
+        if (today_dt - s_dt).days > 99:
+            s_date = (today_dt - timedelta(days=99)).strftime('%Y-%m-%d')
+            print(f"   ⚠️ [LIMIT CAP] Range exceeded 100 days. Capped start_date to {s_date}")
 
-        print(f"\n🔄 [{group_idx}/{total_groups}] Strategy: {s_name} (ID: {s_id})")
-        print(f"   📍 Target: {b_sym} | Date: {t_date} | Linked Rows: {len(ids_to_update)}")
+        print(f"\n🔄 [{group_idx}/{total_groups}] Target: {b_sym}")
+        print(f"   📍 Fetch Range: {s_date} to {today_str} | Linked Rows: {len(ids_to_update)}")
         report_progress("running", f"🔄 [{group_idx}/{total_groups}] Fetching {b_sym}...")
 
-        # --- STEP 1: SHELF CHECK (Database) ---
-        shelf_res = supabase.table("market_ohlc_cache") \
-            .select("ts", count="exact") \
-            .eq("symbol", b_sym) \
-            .like("ts", f"{t_date}%") \
-            .execute()
-
-        row_count = shelf_res.count if shelf_res.count else 0
+        # Shelf Check Optimization (Only if we are just fetching today's intraday)
+        row_count = 0
+        if s_date == today_str:
+            shelf_res = supabase.table("market_ohlc_cache").select("ts", count="exact").eq("symbol", b_sym).like("ts", f"{today_str}%").execute()
+            row_count = shelf_res.count if shelf_res.count else 0
 
         if row_count >= 300:
-            print(f"   ✅ [DATABASE] Shelf Hit: {row_count} candles found. Skipping API.")
+             print(f"   ✅ [DATABASE] Shelf Hit: {row_count} candles found for today. Skipping API.")
+             successful_memory_commits[b_sym] = None # Mark for memory update without API
         else:
-            # --- STEP 2: API FETCH (Fyers) ---
-            print(f"   📡 [API] Shelf Miss: Only {row_count} candles. Requesting Fyers...")
+            print(f"   📡 [API] Requesting Fyers for Date Range: {s_date} to {today_str}...")
             if fyers_api is None:
-                report_progress("running", "🔑 Authenticating with Fyers...")
                 access_token = get_fyers_access_token()
                 if not access_token:
                     print("   ❌ Fyers Login failed.")
@@ -142,26 +181,28 @@ def run_smart_fetcher():
                     return
                 fyers_api = fyersModel.FyersModel(client_id=APP_ID, token=access_token, is_async=False, log_path="")
 
-            # Local Token Resolution Logic
-            if not valid_token:
-                token_lookup = supabase.table("broker_tokens").select("token_id").eq("tsym", b_sym).execute()
-                if token_lookup.data:
-                    valid_token = token_lookup.data[0]['token_id']
-                else:
-                    valid_token = 0 
+            # Resolve Token and Expiry from broker_tokens
 
-            # Fyers History Call
+            token_lookup = supabase.table("broker_tokens").select("token_id, expiry_date").eq("tsym", b_sym).execute()
+            if token_lookup.data:
+                valid_token = token_lookup.data[0]['token_id']
+                sym_expiry = token_lookup.data[0]['expiry_date']
+            else:
+                valid_token = 0
+                sym_expiry = None
+
             data = {
                 "symbol": b_sym,
                 "resolution": "1",
                 "date_format": "1",
-                "range_from": t_date,
-                "range_to": t_date,
+                "range_from": s_date,
+                "range_to": today_str,
                 "cont_flag": "1"
             }
+            
             response = fyers_api.history(data=data)
 
-            # --- THE FALLBACK LOGIC ---
+            # Fallback Logic (Weekly -> Monthly)
             if response.get("s") == "error" and "invalid symbol" in response.get("message", "").lower():
                 monthly_sym = get_monthly_fyers_tsym(t_inst)
                 if monthly_sym and monthly_sym != b_sym:
@@ -171,39 +212,41 @@ def run_smart_fetcher():
                     
                     if response.get("s") == "ok":
                         b_sym = monthly_sym
-                        
-                        # --- ENHANCEMENT: Fetch correct token for the fallback symbol ---
-                        fallback_token = supabase.table("broker_tokens").select("token_id").eq("tsym", monthly_sym).execute()
-                        if fallback_token.data:
-                            valid_token = fallback_token.data[0]['token_id']
+                        # Refresh token/expiry for new monthly symbol
+                        fb_lookup = supabase.table("broker_tokens").select("token_id, expiry_date").eq("tsym", monthly_sym).execute()
+                        if fb_lookup.data:
+                            valid_token = fb_lookup.data[0]['token_id']
+                            sym_expiry = fb_lookup.data[0]['expiry_date']
                             print(f"   🔍 [TOKEN RECOVERED] Found correct token {valid_token} for {monthly_sym}")
                         else:
                             valid_token = 0
+                            sym_expiry = None
                             print(f"   ⚠️ [TOKEN MISSING] Not found in DB. Defaulting to 0 for {monthly_sym}")
                         
-                        # Update Verification table with both the fixed string and the correct token
-                        supabase.table("strategy_trades_verification").update({
-                            "broker_symbol": monthly_sym,
-                            "token_id": valid_token
-                        }).in_("id", ids_to_update).execute()
+                        if ids_to_update:
+                            supabase.table("strategy_trades_verification").update({
+                                "broker_symbol": monthly_sym,
+                                "token_id": valid_token
+                            }).in_("id", ids_to_update).execute()
 
-            # --- PROCESS RESPONSE ---
+            # Process Response
             if response.get("s") == "ok":
                 candles = response.get("candles", [])
                 if candles:
-                    ohlc_batch = {} # Changed from list to dictionary
+                    ohlc_batch = {}
                     for c in candles:
-                        # Exact Legacy Time Formatting Logic 
                         dt_obj = datetime.fromtimestamp(c[0], ist)
+                        
+                        # Dynamic Date & Legacy AM/PM Time Formatting
+                        c_date_str = dt_obj.strftime('%Y-%m-%d')
                         time_part = dt_obj.strftime('%I:%M:%S %p')
                         if time_part.startswith('0'): time_part = time_part[1:]
-                        readable_ist_ts = f"{t_date} {time_part}"
+                        readable_ist_ts = f"{c_date_str} {time_part}"
 
-                        # Dictionary assignment seamlessly overwrites duplicates using timestamp as the key
                         ohlc_batch[readable_ist_ts] = {
                             "token": str(valid_token),
                             "ts": readable_ist_ts,
-                            "symbol": b_sym, # Will be the corrected Monthly string if Fallback triggered
+                            "symbol": b_sym,
                             "open": float(c[1]),
                             "high": float(c[2]),
                             "low": float(c[3]),
@@ -211,42 +254,62 @@ def run_smart_fetcher():
                             "volume": int(c[5])
                         }
 
-                    if ohlc_batch:
-                        # Convert dictionary values back to a list for the final payload
-                        final_payload = list(ohlc_batch.values())
-                        supabase.table("market_ohlc_cache").upsert(final_payload).execute()
-                        row_count = len(final_payload)
-                        print(f"   📥 [SUCCESS] API returned {row_count} unique candles. Cached successfully.")
+                    final_payload = list(ohlc_batch.values())
+                    supabase.table("market_ohlc_cache").upsert(final_payload).execute()
+                    print(f"   📥 [SUCCESS] Cached {len(final_payload)} unique candles across {s_date} to {today_str}.")
+                    
+                    # Flag this symbol as fully up-to-date for memory commit
+                    successful_memory_commits[b_sym] = sym_expiry
                 else:
                     print(f"   ⚠️ [EMPTY] Fyers API returned empty candles array for this range.")
             else:
                 msg = response.get('message', 'Unknown Error')
                 print(f"   ❌ [ERROR] Fyers API response: {msg}")
 
-        # --- STEP 3: STATUS ASSIGNMENT ---
-        if row_count >= 300:
-            final_ohlc_status = "verified_ohlc_present"
-            final_pnl_status = "pending"
-            final_pnl_1min_status = "pending"
-        else:
-            final_ohlc_status = "missing_ohlc_at_vault"
-            final_pnl_status = "skipped_no_ohlc"
-            final_pnl_1min_status = "skipped_no_ohlc"
+        # --- 4. VERIFICATION STATUS ASSIGNMENT ---
+        if ids_to_update:
+            # We simply check if we have data for the original trade date (legacy check)
+            verify_res = supabase.table("market_ohlc_cache").select("ts", count="exact").eq("symbol", b_sym).like("ts", f"{queue_data['start_date']}%").execute()
+            v_count = verify_res.count if verify_res.count else 0
+            
+            if v_count >= 300:
+                final_ohlc_status = "verified_ohlc_present"
+                final_pnl_status = "pending"
+            else:
+                final_ohlc_status = "missing_ohlc_at_vault"
+                final_pnl_status = "skipped_no_ohlc"
 
-        # Bulk update for this specific Group
-        supabase.table("strategy_trades_verification").update({
-            "ohlc_status": final_ohlc_status,
-            "pnl_status": final_pnl_status,
-            "pnl_1min_status": final_pnl_1min_status,
-            "token_id": valid_token
-        }).in_("id", ids_to_update).execute()
+            supabase.table("strategy_trades_verification").update({
+                "ohlc_status": final_ohlc_status,
+                "pnl_status": final_pnl_status,
+                "pnl_1min_status": final_pnl_status,
+                # Safe fallback if valid_token isn't assigned yet
+                "token_id": locals().get('valid_token', 0) 
+            }).in_("id", ids_to_update).execute()
 
-        print(f"   📝 [LOG] Records updated to '{final_ohlc_status}'. Processing complete for this group.")
+            print(f"   📝 [LOG] {len(ids_to_update)} trade(s) updated to '{final_ohlc_status}'.")
+
+    # --- 5. COMMIT POSITIONAL MEMORY ---
+    if successful_memory_commits:
+        print("\n💾 Committing State to Harvest Memory...")
+        mem_payload = []
+        for msym, mexp in successful_memory_commits.items():
+            payload_item = {
+                "symbol": msym,
+                "last_harvested_date": today_str
+            }
+            if mexp: # If we have expiry, update it (useful for newly ingested trades)
+                payload_item["expiry_date"] = mexp
+            mem_payload.append(payload_item)
+            
+        if mem_payload:
+            supabase.table("multi_indices_ohlc_harvest_memory").upsert(mem_payload, on_conflict="symbol").execute()
+            print(f"   ✅ Saved {len(mem_payload)} symbols to active memory.")
 
     print("\n" + "="*100)
     print(f"{'SMART FETCHER RUN COMPLETED':^100}")
     print("="*100)
-    report_progress("success", f"✅ OHLC Fetching Done for {total_groups} groups.")
+    report_progress("success", f"✅ OHLC Fetching Done for {total_groups} targets.")
 
 if __name__ == "__main__":
     try:
