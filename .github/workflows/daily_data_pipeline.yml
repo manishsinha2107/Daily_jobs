@@ -101,14 +101,20 @@ jobs:
           echo "🚀 Step 3: OHLC Fetcher (Self-Healing Fyers)"
           python scripts/3_smart_ohlc_fetcher.py
 
-          echo "🚀 Step 4: PnL Closing (1-Min)"
+          echo "🚀 Step 4: PnL Closing (1-Min Intraday)"
           python scripts/4_pnl_processor_1min_closing.py
 
-          echo "🚀 Step 5: PnL OHLC (High-Fi)"
+          echo "🚀 Step 4b: PnL Ledger (Positional)"
+          python scripts/4_pnl_processor_positional.py
+
+          echo "🚀 Step 5: PnL OHLC (High-Fi Intraday)"
           python scripts/5_pnl_processor_1min_ohlc.py
           
           echo "🚀 Step 6: Daily Strategy PNL Table"
           python scripts/6_pnl_refresh.py
+
+          echo "🚀 Step 6b: Positional PNL Processor"
+          python scripts/9_positional_pnl_processor.py
 
           echo "🚀 Step 7: Expectency Update"
           python scripts/7_expectancy_calc.py
