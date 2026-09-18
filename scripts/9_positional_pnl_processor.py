@@ -79,6 +79,24 @@ def get_historical_tax(lookup, segment, target_date_str):
     if not valid_taxes: return lookup[segment][-1] 
     return valid_taxes[0]
 
+def fetch_ohlc_data_paginated(symbols, t_date):
+    """Paginated fetch for OHLC data safely targeting exact days using the string `.like()` pattern."""
+    all_ohlc = []
+    limit = 1000
+    offset = 0
+    while True:
+        res = supabase.table("market_ohlc_cache") \
+            .select("symbol, ts, close") \
+            .in_("symbol", symbols) \
+            .like("ts", f"{t_date}%") \
+            .range(offset, offset + limit - 1) \
+            .execute()
+        if not res.data: break
+        all_ohlc.extend(res.data)
+        if len(res.data) < limit: break
+        offset += limit
+    return all_ohlc
+
 # =====================================================================
 # LIVE MEMORY ENGINE: 1-MINUTE MAE/MFE CALCULATOR & DAILY SNAPSHOTS
 # =====================================================================
@@ -110,35 +128,34 @@ def extract_memory_extremes(strat_id, entry_time, exit_time):
     trades_df = trades_df.rename(columns={'broker_symbol': 'symbol'})
     symbols = trades_df['symbol'].unique().tolist()
 
-    # 2. Paginated fetch of the massive 1-minute OHLC block strictly for this cycle's duration
-    all_ohlc = []
-    offset = 0
-    while True:
-        res = supabase.table("market_ohlc_cache") \
-            .select("symbol, ts, close") \
-            .in_("symbol", symbols) \
-            .gte("ts", entry_time) \
-            .lte("ts", exit_time) \
-            .order("ts") \
-            .range(offset, offset + limit - 1) \
-            .execute()
-        if not res.data: break
-        all_ohlc.extend(res.data)
-        if len(res.data) < limit: break
-        offset += limit
-        
-    ohlc_df = pd.DataFrame(all_ohlc)
-    if ohlc_df.empty:
-        return 0.0, str(exit_time), 0.0, str(entry_time), {}
-
-    # Align the time column name for the loop
-    ohlc_df = ohlc_df.rename(columns={'ts': 'timestamp'})
-
-    # 3. Simulate the timeline
-    trades_df['txn_time'] = pd.to_datetime(trades_df['txn_time'])
-    ohlc_df['timestamp'] = pd.to_datetime(ohlc_df['timestamp'])
+    # 2. Fetch OHLC day by day to perfectly respect the AM/PM String limitations
+    entry_dt = pd.to_datetime(entry_time)
+    exit_dt = pd.to_datetime(exit_time)
+    current_d = entry_dt.date()
+    end_d = exit_dt.date()
     
-    unique_times = sorted(ohlc_df['timestamp'].unique())
+    ohlc_lookup = {}
+    all_timestamps = set()
+
+    while current_d <= end_d:
+        d_str = current_d.strftime('%Y-%m-%d')
+        day_ohlc = fetch_ohlc_data_paginated(symbols, d_str)
+        for row in day_ohlc:
+            ohlc_lookup[(row['symbol'], row['ts'])] = float(row['close'])
+            try:
+                # Capture exact OHLC minutes into our timeline
+                dt_val = datetime.strptime(row['ts'], "%Y-%m-%d %I:%M:%S %p")
+                all_timestamps.add(dt_val)
+            except Exception:
+                pass
+        current_d += timedelta(days=1)
+
+    trades_df['txn_time'] = pd.to_datetime(trades_df['txn_time'])
+    for t in trades_df['txn_time']:
+        # Floor trades to the nearest minute to align with OHLC candles
+        all_timestamps.add(t.replace(second=0, microsecond=0))
+
+    unique_times = sorted(list(all_timestamps))
     trade_idx = 0
     total_trades = len(trades_df)
     
@@ -168,7 +185,7 @@ def extract_memory_extremes(strat_id, entry_time, exit_time):
             }
 
         # Process any fills that occurred exactly at or just before this minute
-        while trade_idx < total_trades and trades_df.iloc[trade_idx]['txn_time'] <= current_ts:
+        while trade_idx < total_trades and trades_df.iloc[trade_idx]['txn_time'] <= current_ts + timedelta(seconds=59):
             txn = trades_df.iloc[trade_idx]
             sym = txn['symbol']
             t_price = float(txn['price'])
@@ -176,7 +193,8 @@ def extract_memory_extremes(strat_id, entry_time, exit_time):
             t_type = txn['txn_type']
 
             if sym not in inventory or inventory[sym]['qty'] == 0:
-                inventory[sym] = {'qty': t_qty, 'avg_price': t_price, 'side': 'LONG' if t_type == 'B' else 'SHORT'}
+                # INJECTED: Seed 'last_price' memory with the execution price
+                inventory[sym] = {'qty': t_qty, 'avg_price': t_price, 'side': 'LONG' if t_type == 'B' else 'SHORT', 'last_price': t_price}
             else:
                 inv = inventory[sym]
                 if (inv['side'] == 'LONG' and t_type == 'B') or (inv['side'] == 'SHORT' and t_type == 'S'):
@@ -191,22 +209,30 @@ def extract_memory_extremes(strat_id, entry_time, exit_time):
                         inv['side'] = 'SHORT' if inv['side'] == 'LONG' else 'LONG'
                         inv['qty'] = excess
                         inv['avg_price'] = t_price
+                        inv['last_price'] = t_price # INJECTED: Reset anchor on position flip
                     else:
                         mult = 1 if inv['side'] == 'LONG' else -1
                         realized_pnl += (t_price - inv['avg_price']) * t_qty * mult
                         inv['qty'] -= t_qty
             trade_idx += 1
 
-        # Calculate Unrealized MTM using this minute's closing prices
-        unrealized_pnl = 0.0
-        current_closes = ohlc_df[ohlc_df['timestamp'] == current_ts].set_index('symbol')['close'].to_dict()
+        # Calculate Unrealized MTM using the safest possible lookup approach
+        m_close = 0.0
+        time_str_db = current_ts.strftime('%I:%M:%S %p').lstrip('0')
+        lookup_ts = f"{date_str} {time_str_db}"
         
         for sym, inv in inventory.items():
-            if inv['qty'] > 0 and sym in current_closes:
-                mult = 1 if inv['side'] == 'LONG' else -1
-                unrealized_pnl += (current_closes[sym] - inv['avg_price']) * inv['qty'] * mult
+            if inv['qty'] > 0:
+                close_val = ohlc_lookup.get((sym, lookup_ts))
+                # INJECTED: Update memory if the broker provided a candle
+                if close_val is not None:
+                    inv['last_price'] = close_val
+                
+                # INJECTED: Always calculate MTM using the memory (fresh candle or carry-forward)
+                pnl_mult = 1 if inv['side'] == 'LONG' else -1
+                m_close += (inv['last_price'] - inv['avg_price']) * inv['qty'] * pnl_mult
 
-        total_live_pnl = realized_pnl + unrealized_pnl
+        total_live_pnl = realized_pnl + m_close
         
         # Continuously overwrite EOD snapshot
         daily_mtm_snapshots[date_str]['eod_pnl'] = total_live_pnl
@@ -472,7 +498,6 @@ def run_live_positional_curve_rebuilder():
                     "estimated_costs": round(daily_cost, 2),
                     "net_pnl": round(daily_net, 2),
                     "base_qtys": json.dumps(daily_qtys)
-                    # Excluded overlap_live_pnl and overlap_slippage_amount to match schema
                 })
                 
                 prev_snap = curr_snap
