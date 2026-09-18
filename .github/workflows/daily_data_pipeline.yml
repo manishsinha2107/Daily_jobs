@@ -90,13 +90,13 @@ jobs:
         run: |
 
           echo "🚀 Step 0: Trade Ingestor (Drive to Supabase Audit)"
-          python scripts/0_trade_ingestor.py
+          #python scripts/0_trade_ingestor.py
 
           echo "🚀 Step 1: Broker Tokens"
-          python scripts/1_update_broker_token.py
+          #python scripts/1_update_broker_token.py
 
           echo "🚀 Step 2: Trade Verification"
-          python scripts/2_update_strategy_trades_verification.py
+          #python scripts/2_update_strategy_trades_verification.py
 
           echo "🚀 Step 3: OHLC Fetcher (Self-Healing Fyers)"
           python scripts/3_smart_ohlc_fetcher.py
