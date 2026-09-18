@@ -1,7 +1,7 @@
 import os
 import sys
 import builtins
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 try:
     from dotenv import load_dotenv
     if os.path.exists(".env"):
@@ -37,8 +37,8 @@ def report_progress(status, msg):
         print(f"⚠️ Heartbeat update failed: {e}")
 
 def cleanup_old_ohlc():
-    # Calculate cutoff date as today's UTC date
-    cutoff_date = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    # Calculate cutoff date as 60 days prior to today's UTC date
+    cutoff_date = (datetime.now(timezone.utc) - timedelta(days=60)).strftime("%Y-%m-%d")
     msg_start = f"🧹 Starting OHLC Cleanup: Removing records older than {cutoff_date} 00:00:00..."
     print(msg_start)
     report_progress("running", msg_start)
