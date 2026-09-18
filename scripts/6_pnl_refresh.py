@@ -105,10 +105,11 @@ def run_pnl_refresh():
     print(msg_start)
     report_progress("running", msg_start)
     
-    # 1. THE UNIFIED MASTER FETCH (Whitelisted by central config rules)
+
+    # 1. THE UNIFIED MASTER FETCH (Whitelisted by central config rules and Intraday position type)
     master_res = supabase.table("strategies").select(
         "strategy_id, strategy_name, strategy_full_name, status, deployment_type, strategy_grouping, trades_type, capital, index_name, user_name"
-    ).in_("deployment_type", config.DEPLOYMENT_TYPES).execute()
+    ).in_("deployment_type", config.DEPLOYMENT_TYPES).eq("position_type", "Intraday").execute()
     
     if not master_res.data:
         msg_none = "✅ No strategies found in master table."
