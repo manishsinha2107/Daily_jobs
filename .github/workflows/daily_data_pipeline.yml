@@ -114,7 +114,7 @@ jobs:
           python scripts/7_expectancy_calc.py
           
           echo "🚀 Step 8: Social Media Post Update"
-          python social_repo/scripts/4_personal_broadcast.py
+          # python social_repo/scripts/4_personal_broadcast.py
 
           echo "🚀 Step 9: OHLC Cache Cleanup (30-Day Purge)"
           python scripts/Step8_cleanup_old_ohlc.py
