@@ -55,7 +55,6 @@ def get_historical_freeze_limit(lookup, index_name, target_date_str):
     if index_name not in lookup or not lookup[index_name]: 
         raise ValueError(f"❌ Missing lot size/freeze limit data in DB for index {index_name}")
     
-    # Format date strictly to match database strings
     target_dt_str = str(target_date_str).split(' ')[0]
     first_of_month = datetime.strptime(target_dt_str, "%Y-%m-%d").replace(day=1).strftime("%Y-%m-%d")
     
@@ -77,7 +76,6 @@ def run_live_positional_ledger():
     print("🚀 INITIATING LIVE POSITIONAL TRADE LEDGER ENGINE")
     print(f"{'='*60}\n")
 
-    # 1. Fetch metadata directly from Supabase for live strategies
     print("📡 Fetching strategy metadata & lot sizes from Supabase...")
     strat_res = supabase.table("strategies").select("strategy_id, index_name, position_type, deployment_type") \
         .eq("position_type", "Positional") \
@@ -91,11 +89,9 @@ def run_live_positional_ledger():
     strategy_lookup = {int(row['strategy_id']): row['index_name'] for row in strat_res.data}
     valid_strat_ids = list(strategy_lookup.keys())
     
-    # 2. Build the historical lot size & freeze limit dictionary
     lot_data = fetch_all_paginated("lot_sizes")
     lot_lookup = build_lot_size_lookup(lot_data)
 
-    # 3. Pull strictly verified live trades using pagination to bypass 1000-row limits
     print("📡 Querying verified positional trade logs from Supabase...")
     all_trades = []
     offset, limit = 0, 1000
@@ -118,21 +114,18 @@ def run_live_positional_ledger():
         return
 
     raw_trades = pd.DataFrame(all_trades)
-    raw_trades['txn_time'] = pd.to_datetime(raw_trades['txn_time'])
+    raw_trades['txn_time'] = pd.to_datetime(raw_trades['txn_time'], format='mixed').apply(lambda x: x.replace(tzinfo=None))
     
     all_cycles = []
     
-    # 4. Sweep each strategy independently
     for strat_id, strat_trades in raw_trades.groupby('strategy_id'):
         print(f"🔍 Sweeping fills for Strategy ID: {strat_id}...")
         
         index_name = strategy_lookup.get(strat_id, 'NIFTY')
         
-        # State Machine Trackers
         inventory = {}
         realized_pnl = 0.0
         
-        # Cycle-Specific Trackers
         cycle_start_time = None
         buy_fills = 0
         sell_fills = 0
@@ -140,7 +133,6 @@ def run_live_positional_ledger():
         premium_turnover = 0.0
         base_qtys = []
         
-        # Sort explicitly to guarantee chronological sweep
         strat_trades = strat_trades.sort_values(by='txn_time')
         
         for _, txn in strat_trades.iterrows():
@@ -150,21 +142,17 @@ def run_live_positional_ledger():
             t_type = txn['txn_type']
             t_time = txn['txn_time']
             
-            # Anchor cycle start
             if not cycle_start_time:
                 cycle_start_time = t_time
                 
-            # Aggregate Cycle Metrics organically
             buy_fills += 1 if t_type == 'B' else 0
             sell_fills += 1 if t_type == 'S' else 0
             premium_turnover += (t_price * t_qty)
             base_qtys.append(t_qty)
             
-            # 🚨 Precise Database-Driven Order Count Calculation
             freeze_limit = get_historical_freeze_limit(lot_lookup, index_name, t_time)
             order_count += math.ceil(t_qty / freeze_limit)
 
-            # Dictionary-Based Inventory Engine
             if sym not in inventory or inventory[sym]['qty'] == 0:
                 inventory[sym] = {'qty': t_qty, 'avg_price': t_price, 'side': 'LONG' if t_type == 'B' else 'SHORT'}
             else:
@@ -187,23 +175,19 @@ def run_live_positional_ledger():
                         realized_pnl += (t_price - inv['avg_price']) * t_qty * pnl_mult
                         inv['qty'] -= t_qty
 
-            # EXIT TRIGGER: Are all symbols in the dictionary perfectly flat?
             if all(v['qty'] == 0 for k, v in inventory.items()):
                 exit_time = t_time
                 duration = (exit_time.date() - cycle_start_time.date()).days
                 
-                # Deterministic Cycle ID guarantees flawless upsert behavior (No random UUIDs)
                 cycle_id = f"CYC-{strat_id}-{cycle_start_time.strftime('%Y%m%d%H%M')}-{exit_time.strftime('%Y%m%d%H%M')}"
                 
-
-                # Package the exact requested schema using strict ISO 8601 formatting
                 cycle_record = {
                     'cycle_id': cycle_id,
                     'strategy_id': strat_id,
-                    'entry_date': cycle_start_time.strftime('%Y-%m-%d'),
-                    'exit_date': exit_time.strftime('%Y-%m-%d'),
-                    'entry_time': cycle_start_time.isoformat(),
-                    'exit_time': exit_time.isoformat(),
+                    'entry_date': str(cycle_start_time.date()),
+                    'exit_date': str(exit_time.date()),
+                    'entry_time': str(cycle_start_time),
+                    'exit_time': str(exit_time),
                     'duration_days': duration,
                     'gross_pnl': round(realized_pnl, 2),
                     'buy_fills': buy_fills,
@@ -215,7 +199,6 @@ def run_live_positional_ledger():
                 }
                 all_cycles.append(cycle_record)
                 
-                # Reset trackers for the next cycle
                 inventory = {}
                 realized_pnl = 0.0
                 cycle_start_time = None
@@ -225,7 +208,6 @@ def run_live_positional_ledger():
                 premium_turnover = 0.0
                 base_qtys = []
 
-    # 5. Safe Insertion Phase (Upsert)
     if all_cycles:
         print(f"📤 Pushing {len(all_cycles)} completed positional cycles to database...")
         
