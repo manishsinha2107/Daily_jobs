@@ -134,36 +134,45 @@ def extract_memory_extremes(strat_id, entry_date_str, exit_date_str, entry_time_
 
     symbols = trades_df['broker_symbol'].unique().tolist()
 
-    # 3. FETCH OHLC DAY-BY-DAY (Bypasses AM/PM Bugs)
+    # 3. FETCH OHLC DAY-BY-DAY (Bypasses AM/PM Bugs & SKIPS WEEKENDS)
     current_d = entry_dt.date()
     end_d = exit_dt.date()
     ohlc_lookup = {}
     
     while current_d <= end_d:
-        d_str = current_d.strftime('%Y-%m-%d')
-        day_ohlc = fetch_ohlc_data_paginated(symbols, d_str)
-        for row in day_ohlc:
-            # Implement Exact Intraday Architecture for OHLC lookup
-            ohlc_lookup[(row['symbol'], row['ts'])] = float(row['close'])
+        if current_d.weekday() < 5:  # 0-4 represents Monday-Friday
+            d_str = current_d.strftime('%Y-%m-%d')
+            day_ohlc = fetch_ohlc_data_paginated(symbols, d_str)
+            for row in day_ohlc:
+                # Implement Exact Intraday Architecture for OHLC lookup
+                ohlc_lookup[(row['symbol'], row['ts'])] = float(row['close'])
         current_d += timedelta(days=1)
 
-    # 4. GENERATE CONTINUOUS MARKET HOURS TIMELINE
+    # 4. GENERATE CONTINUOUS MARKET HOURS TIMELINE (SKIPS WEEKENDS & AFTER HOURS)
     current_time = entry_dt.replace(second=0, microsecond=0)
     end_time = exit_dt.replace(second=0, microsecond=0)
     unique_times = []
     
     while current_time <= end_time:
+        # Skip Weekends entirely
+        if current_time.weekday() >= 5:
+            current_time = (current_time + timedelta(days=1)).replace(hour=9, minute=15)
+            continue
+            
         if current_time.hour > 15 or (current_time.hour == 15 and current_time.minute > 30):
             current_time = (current_time + timedelta(days=1)).replace(hour=9, minute=15)
             continue
         if current_time.hour < 9 or (current_time.hour == 9 and current_time.minute < 15):
             current_time = current_time.replace(hour=9, minute=15)
             continue
+            
         unique_times.append(current_time)
         current_time += timedelta(minutes=1)
         
     for t in trades_df['dt_obj']:
-        unique_times.append(t.replace(second=0, microsecond=0))
+        # Ensure execution times are in the list
+        if t.weekday() < 5:
+            unique_times.append(t.replace(second=0, microsecond=0))
         
     unique_times = sorted(list(set(unique_times)))
 
@@ -356,6 +365,9 @@ def run_live_positional_curve_rebuilder():
             valid_trading_dates = set(daily_snapshots.keys())
             valid_trading_dates.add(entry_date_str)
             valid_trading_dates.add(exit_date_str)
+            
+            # Strip out any weekends from valid_trading_dates fallback
+            valid_trading_dates = {d for d in valid_trading_dates if datetime.strptime(d, "%Y-%m-%d").weekday() < 5}
             sorted_dates = sorted(list(valid_trading_dates))
             
             prev_snap = 0.0
