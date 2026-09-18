@@ -105,7 +105,7 @@ jobs:
           python scripts/4_pnl_processor_1min_closing.py
 
           echo "🚀 Step 4b: PnL Ledger (Positional)"
-          python scripts/4_pnl_processor_positional.py
+          #python scripts/4_pnl_processor_positional.py
 
           echo "🚀 Step 5: PnL OHLC (High-Fi Intraday)"
           python scripts/5_pnl_processor_1min_ohlc.py
@@ -114,7 +114,7 @@ jobs:
           python scripts/6_pnl_refresh.py
 
           echo "🚀 Step 6b: Positional PNL Processor"
-          python scripts/9_positional_pnl_processor.py
+          #python scripts/9_positional_pnl_processor.py
 
           echo "🚀 Step 7: Expectency Update"
           python scripts/7_expectancy_calc.py
