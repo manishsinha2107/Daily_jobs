@@ -101,8 +101,16 @@ def fetch_ohlc_data_paginated(symbols, t_date):
 # LIVE MEMORY ENGINE: 1-MINUTE MAE/MFE CALCULATOR & DAILY SNAPSHOTS
 # =====================================================================
 def extract_memory_extremes(strat_id, entry_time, exit_time):
-    """Calculates Max Profit, Max Loss, and dynamic daily extremes using Live Supabase tables."""
-    # 1. Paginated fetch of exact legs executed during this specific cycle
+    """Calculates Max Profit, Max Loss, and dynamic daily extremes using safe date-based Supabase queries."""
+    
+    # Safely parse the ISO timestamps provided by the ledger
+    entry_dt = pd.to_datetime(entry_time)
+    exit_dt = pd.to_datetime(exit_time)
+    
+    entry_date_str = entry_dt.strftime('%Y-%m-%d')
+    exit_date_str = exit_dt.strftime('%Y-%m-%d')
+
+    # 1. Paginated fetch using trade_date (SAFE) instead of txn_time (UNSAFE AM/PM)
     all_trades = []
     offset, limit = 0, 1000
     while True:
@@ -110,9 +118,8 @@ def extract_memory_extremes(strat_id, entry_time, exit_time):
             .select("broker_symbol, txn_time, txn_type, quantity, price") \
             .eq("strategy_id", strat_id) \
             .eq("ohlc_status", "verified_ohlc_present") \
-            .gte("txn_time", entry_time) \
-            .lte("txn_time", exit_time) \
-            .order("txn_time") \
+            .gte("trade_date", entry_date_str) \
+            .lte("trade_date", exit_date_str) \
             .range(offset, offset + limit - 1) \
             .execute()
         if not res.data: break
@@ -124,76 +131,78 @@ def extract_memory_extremes(strat_id, entry_time, exit_time):
     if trades_df.empty:
         return 0.0, str(exit_time), 0.0, str(entry_time), {}
 
-    # Map broker_symbol to 'symbol' to align with the core mathematical loop
+    # Convert AM/PM strings to real datetime objects and filter exactly in Pandas
+    trades_df['txn_time'] = pd.to_datetime(trades_df['txn_time'])
+    trades_df = trades_df[(trades_df['txn_time'] >= entry_dt) & (trades_df['txn_time'] <= exit_dt)]
+    trades_df = trades_df.sort_values(by='txn_time')
+
+    if trades_df.empty:
+        return 0.0, str(exit_time), 0.0, str(entry_time), {}
+
     trades_df = trades_df.rename(columns={'broker_symbol': 'symbol'})
     symbols = trades_df['symbol'].unique().tolist()
 
-    # 2. Fetch OHLC day by day to perfectly respect the AM/PM String limitations
-    entry_dt = pd.to_datetime(entry_time)
-    exit_dt = pd.to_datetime(exit_time)
+    # 2. Fetch OHLC strictly day-by-day to bypass AM/PM string corruption
     current_d = entry_dt.date()
     end_d = exit_dt.date()
-    
     ohlc_lookup = {}
     all_timestamps = set()
 
     while current_d <= end_d:
         d_str = current_d.strftime('%Y-%m-%d')
+        # We must use fetch_ohlc_data_paginated using .like("ts", f"{d_str}%")
         day_ohlc = fetch_ohlc_data_paginated(symbols, d_str)
         for row in day_ohlc:
             ohlc_lookup[(row['symbol'], row['ts'])] = float(row['close'])
             try:
-                # Capture exact OHLC minutes into our timeline
-                dt_val = datetime.strptime(row['ts'], "%Y-%m-%d %I:%M:%S %p")
+                dt_val = pd.to_datetime(row['ts'])
                 all_timestamps.add(dt_val)
-            except Exception:
+            except:
                 pass
         current_d += timedelta(days=1)
 
-    trades_df['txn_time'] = pd.to_datetime(trades_df['txn_time'])
+    # 3. Timeline Alignment & Daily EOD Anchor Injection
     for t in trades_df['txn_time']:
-        # Floor trades to the nearest minute to align with OHLC candles
         all_timestamps.add(t.replace(second=0, microsecond=0))
+        
+    # Inject 15:30:00 for every holding day to ensure a daily MTM snapshot even if the day had zero trades
+    current_d = entry_dt.date()
+    while current_d <= end_d:
+        eod_anchor = pd.to_datetime(f"{current_d} 15:30:00")
+        all_timestamps.add(eod_anchor)
+        current_d += timedelta(days=1)
 
     unique_times = sorted(list(all_timestamps))
+    
+    # Filter the timeline to only evaluate between entry and exit
+    unique_times = [t for t in unique_times if t >= entry_dt.replace(second=0, microsecond=0) and t <= exit_dt]
+
     trade_idx = 0
     total_trades = len(trades_df)
-    
     inventory = {}
     realized_pnl = 0.0
     
-    max_pnl = -float('inf')
-    max_pnl_time = None
-    min_pnl = float('inf')
-    min_pnl_time = None
-    
+    max_pnl, min_pnl = -float('inf'), float('inf')
+    max_pnl_time, min_pnl_time = None, None
     daily_mtm_snapshots = {}
 
-    # Step through every minute data point organically
     for current_ts in unique_times:
         date_str = current_ts.strftime('%Y-%m-%d')
         time_str = current_ts.strftime('%I:%M %p').lstrip('0')
         
-        # Initialize daily trackers dynamically
         if date_str not in daily_mtm_snapshots:
             daily_mtm_snapshots[date_str] = {
-                'eod_pnl': 0.0,
-                'max_pnl': -float('inf'),
-                'max_time': time_str,
-                'min_pnl': float('inf'),
-                'min_time': time_str
+                'eod_pnl': 0.0, 'max_pnl': -float('inf'), 'max_time': time_str, 
+                'min_pnl': float('inf'), 'min_time': time_str
             }
 
-        # Process any fills that occurred exactly at or just before this minute
+        # Process trades up to this minute
         while trade_idx < total_trades and trades_df.iloc[trade_idx]['txn_time'] <= current_ts + timedelta(seconds=59):
             txn = trades_df.iloc[trade_idx]
-            sym = txn['symbol']
-            t_price = float(txn['price'])
+            sym, t_price, t_type = txn['symbol'], float(txn['price']), txn['txn_type']
             t_qty = int(abs(txn['quantity']))
-            t_type = txn['txn_type']
 
             if sym not in inventory or inventory[sym]['qty'] == 0:
-                # INJECTED: Seed 'last_price' memory with the execution price
                 inventory[sym] = {'qty': t_qty, 'avg_price': t_price, 'side': 'LONG' if t_type == 'B' else 'SHORT', 'last_price': t_price}
             else:
                 inv = inventory[sym]
@@ -209,14 +218,14 @@ def extract_memory_extremes(strat_id, entry_time, exit_time):
                         inv['side'] = 'SHORT' if inv['side'] == 'LONG' else 'LONG'
                         inv['qty'] = excess
                         inv['avg_price'] = t_price
-                        inv['last_price'] = t_price # INJECTED: Reset anchor on position flip
+                        inv['last_price'] = t_price 
                     else:
                         mult = 1 if inv['side'] == 'LONG' else -1
                         realized_pnl += (t_price - inv['avg_price']) * t_qty * mult
                         inv['qty'] -= t_qty
             trade_idx += 1
 
-        # Calculate Unrealized MTM using the safest possible lookup approach
+        # MTM Evaluation utilizing last_price cache for blank holding days
         m_close = 0.0
         time_str_db = current_ts.strftime('%I:%M:%S %p').lstrip('0')
         lookup_ts = f"{date_str} {time_str_db}"
@@ -224,20 +233,16 @@ def extract_memory_extremes(strat_id, entry_time, exit_time):
         for sym, inv in inventory.items():
             if inv['qty'] > 0:
                 close_val = ohlc_lookup.get((sym, lookup_ts))
-                # INJECTED: Update memory if the broker provided a candle
                 if close_val is not None:
                     inv['last_price'] = close_val
                 
-                # INJECTED: Always calculate MTM using the memory (fresh candle or carry-forward)
                 pnl_mult = 1 if inv['side'] == 'LONG' else -1
                 m_close += (inv['last_price'] - inv['avg_price']) * inv['qty'] * pnl_mult
 
         total_live_pnl = realized_pnl + m_close
         
-        # Continuously overwrite EOD snapshot
         daily_mtm_snapshots[date_str]['eod_pnl'] = total_live_pnl
         
-        # Track DAILY watermarks
         if total_live_pnl > daily_mtm_snapshots[date_str]['max_pnl']:
             daily_mtm_snapshots[date_str]['max_pnl'] = total_live_pnl
             daily_mtm_snapshots[date_str]['max_time'] = time_str
@@ -246,26 +251,16 @@ def extract_memory_extremes(strat_id, entry_time, exit_time):
             daily_mtm_snapshots[date_str]['min_pnl'] = total_live_pnl
             daily_mtm_snapshots[date_str]['min_time'] = time_str
 
-        # Track CYCLE watermarks
-        if total_live_pnl > max_pnl:
-            max_pnl = total_live_pnl
-            max_pnl_time = time_str
-        if total_live_pnl < min_pnl:
-            min_pnl = total_live_pnl
-            min_pnl_time = time_str
+        if total_live_pnl > max_pnl: max_pnl, max_pnl_time = total_live_pnl, time_str
+        if total_live_pnl < min_pnl: min_pnl, min_pnl_time = total_live_pnl, time_str
 
-    # Final sweep to catch flat days
     for d_str, stats in daily_mtm_snapshots.items():
-        if stats['max_pnl'] == -float('inf'):
-            stats['max_pnl'] = stats['eod_pnl']
-        if stats['min_pnl'] == float('inf'):
-            stats['min_pnl'] = stats['eod_pnl']
+        if stats['max_pnl'] == -float('inf'): stats['max_pnl'] = stats['eod_pnl']
+        if stats['min_pnl'] == float('inf'): stats['min_pnl'] = stats['eod_pnl']
 
     return (
-        round(max_pnl, 2) if max_pnl != -float('inf') else 0.0, 
-        max_pnl_time, 
-        round(min_pnl, 2) if min_pnl != float('inf') else 0.0, 
-        min_pnl_time,
+        round(max_pnl, 2) if max_pnl != -float('inf') else 0.0, max_pnl_time, 
+        round(min_pnl, 2) if min_pnl != float('inf') else 0.0, min_pnl_time,
         daily_mtm_snapshots
     )
 
