@@ -152,12 +152,6 @@ def run_smart_fetcher():
         t_inst = queue_data['instrument']
         ids_to_update = list(queue_data['linked_ids'])
         
-        # Safety Protocol: Cap maximum fetch to 99 days (Fyers Limit is 100)
-        s_dt = datetime.strptime(s_date, '%Y-%m-%d')
-        if (today_dt - s_dt).days > 99:
-            s_date = (today_dt - timedelta(days=99)).strftime('%Y-%m-%d')
-            print(f"   ⚠️ [LIMIT CAP] Range exceeded 100 days. Capped start_date to {s_date}")
-
         print(f"\n🔄 [{group_idx}/{total_groups}] Target: {b_sym}")
         print(f"   📍 Fetch Range: {s_date} to {today_str} | Linked Rows: {len(ids_to_update)}")
         report_progress("running", f"🔄 [{group_idx}/{total_groups}] Fetching {b_sym}...")
