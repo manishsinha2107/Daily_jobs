@@ -195,14 +195,15 @@ def run_live_positional_ledger():
                 # Deterministic Cycle ID guarantees flawless upsert behavior (No random UUIDs)
                 cycle_id = f"CYC-{strat_id}-{cycle_start_time.strftime('%Y%m%d%H%M')}-{exit_time.strftime('%Y%m%d%H%M')}"
                 
-                # Package the exact requested schema
+
+                # Package the exact requested schema using strict ISO 8601 formatting
                 cycle_record = {
                     'cycle_id': cycle_id,
                     'strategy_id': strat_id,
-                    'entry_date': str(cycle_start_time.date()),
-                    'exit_date': str(exit_time.date()),
-                    'entry_time': str(cycle_start_time),
-                    'exit_time': str(exit_time),
+                    'entry_date': cycle_start_time.strftime('%Y-%m-%d'),
+                    'exit_date': exit_time.strftime('%Y-%m-%d'),
+                    'entry_time': cycle_start_time.isoformat(),
+                    'exit_time': exit_time.isoformat(),
                     'duration_days': duration,
                     'gross_pnl': round(realized_pnl, 2),
                     'buy_fills': buy_fills,
