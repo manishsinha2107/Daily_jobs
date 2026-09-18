@@ -21,17 +21,9 @@ SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 
 if not SUPABASE_URL or not SUPABASE_KEY:
-    raise ValueError("Primary Supabase credentials not found in environment variables.")
+    raise ValueError("Supabase credentials not found in environment variables.")
 
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
-
-# --- Secondary Client for Universe Table ---
-SUPABASE_MANISHSINHA_URL = os.getenv("SUPABASE_MANISHSINHA_URL")
-SUPABASE_MANISHSINHA_KEY = os.getenv("SUPABASE_MANISHSINHA_KEY")
-
-supabase_manish = None
-if SUPABASE_MANISHSINHA_URL and SUPABASE_MANISHSINHA_KEY:
-    supabase_manish = create_client(SUPABASE_MANISHSINHA_URL, SUPABASE_MANISHSINHA_KEY)
 
 # --- HEARTBEAT REPORTER ---
 def report_progress(status, msg):
@@ -49,39 +41,42 @@ def cleanup_old_ohlc():
     cutoff_date = (datetime.now(timezone.utc) - timedelta(days=60)).strftime("%Y-%m-%d")
     today_date = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     
-    msg_start = f"🧹 Starting Cleanup: OHLC older than {cutoff_date}, Universe prior to {today_date}..."
+    msg_start = f"🧹 Starting Cleanup: OHLC (< {cutoff_date}), Universe (< {today_date}), Tokens (< {today_date})..."
     print(msg_start)
     report_progress("running", msg_start)
 
     total_ohlc_deleted = 0
     total_univ_deleted = 0
+    total_tokens_deleted = 0
 
     try:
-        # 1. Purge OHLC Cache (60 days) on Primary Supabase
+        # 1. Purge OHLC Cache (60 days)
         res_ohlc = supabase.table("market_ohlc_cache") \
             .delete(returning="minimal", count="exact") \
             .lt("ts", f"{cutoff_date} 00:00:00") \
             .execute()
-        
         total_ohlc_deleted = res_ohlc.count if res_ohlc.count is not None else 0
 
-        # 2. Purge Tracked Options Universe (Expired Contracts) on Secondary Supabase
-        if supabase_manish:
-            res_univ = supabase_manish.table("tracked_options_universe") \
-                .delete(returning="minimal", count="exact") \
-                .lt("expiry_date", today_date) \
-                .execute()
-            
-            total_univ_deleted = res_univ.count if res_univ.count is not None else 0
-        else:
-            print("⚠️ ManishSinha Supabase credentials missing. Skipping Universe cleanup.")
+        # 2. Purge Tracked Options Universe (Expired Contracts)
+        res_univ = supabase.table("tracked_options_universe") \
+            .delete(returning="minimal", count="exact") \
+            .lt("expiry_date", today_date) \
+            .execute()
+        total_univ_deleted = res_univ.count if res_univ.count is not None else 0
+
+        # 3. Purge Broker Tokens (Expired Tokens)
+        res_tokens = supabase.table("broker_tokens") \
+            .delete(returning="minimal", count="exact") \
+            .lt("expiry_date", today_date) \
+            .execute()
+        total_tokens_deleted = res_tokens.count if res_tokens.count is not None else 0
 
     except Exception as e:
         print(f"❌ Error during cleanup: {e}")
         report_progress("error", f"❌ Cleanup error: {str(e)[:50]}")
         raise e
 
-    success_msg = f"✅ Cleanup Complete: {total_ohlc_deleted} OHLC records (< {cutoff_date}) and {total_univ_deleted} expired contracts (< {today_date}) removed."
+    success_msg = f"✅ Cleanup Complete: {total_ohlc_deleted} OHLC, {total_univ_deleted} Universe, {total_tokens_deleted} Tokens removed."
     print(success_msg)
     report_progress("success", success_msg)
 
