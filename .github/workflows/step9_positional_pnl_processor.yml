@@ -1,10 +1,10 @@
-name: Live Positional Trade Ledger
+name: 🔑 Step 9 - positional_pnl_processor
 
 on:
   workflow_dispatch: # Manual trigger only
 
 jobs:
-  run-positional-ledger:
+  run-positional-pnl:
     runs-on: ubuntu-latest
 
     steps:
@@ -22,9 +22,9 @@ jobs:
           python -m pip install --upgrade pip
           if [ -f requirements.txt ]; then pip install -r requirements.txt; else pip install pandas supabase python-dotenv; fi
 
-      - name: Execute Positional Ledger Script
+      - name: Execute Positional PNL Processor Script
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
         run: |
-          python scripts/4_pnl_processor_positional.py
+          python scripts/9_positional_pnl_processor.py

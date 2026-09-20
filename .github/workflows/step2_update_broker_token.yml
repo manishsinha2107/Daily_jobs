@@ -1,4 +1,4 @@
-name: 🔑 Step 1 - Broker Token Sync
+name: 🔑 Step 2 - update_broker_token
 
 on:
   workflow_dispatch:
@@ -31,4 +31,4 @@ jobs:
           FYERS_SECRET_ID: ${{ secrets.FYERS_SECRET_ID }}
           FYERS_PIN: ${{ secrets.FYERS_PIN }}
           FYERS_TOTP_KEY: ${{ secrets.FYERS_TOTP_KEY }}
-        run: python -u scripts/1_update_broker_token.py
+        run: python -u scripts/2_update_broker_token.py

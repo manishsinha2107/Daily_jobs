@@ -1,4 +1,4 @@
-name: 📝 Step 2 - Trade Verification Sync
+name: 📝 Step 3 - update_strategy_trades_verification
 
 on:
   workflow_dispatch:
@@ -19,4 +19,5 @@ jobs:
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
-        run: python -u scripts/2_update_strategy_trades_verification.py
+        run: python -u scripts/3_update_strategy_trades_verification.py
+

@@ -89,40 +89,40 @@ jobs:
           PERSONAL_CHANNEL_ID: ${{ secrets.PERSONAL_CHANNEL_ID }}
         run: |
 
-          echo "🚀 Step 0: Trade Ingestor (Drive to Supabase Audit)"
-          python scripts/0_trade_ingestor.py
+          echo "🚀 Step 1: Trade Ingestor (Drive to Supabase Audit)"
+          python scripts/1_trade_ingestor.py
 
-          echo "🚀 Step 1: Broker Tokens"
-          python scripts/1_update_broker_token.py
+          echo "🚀 Step 2: Broker Tokens"
+          python scripts/2_update_broker_token.py
 
-          echo "🚀 Step 2: Trade Verification"
-          python scripts/2_update_strategy_trades_verification.py
+          echo "🚀 Step 3: Trade Verification"
+          python scripts/3_update_strategy_trades_verification.py
 
-          echo "🚀 Step 3: OHLC Fetcher (Self-Healing Fyers)"
-          python scripts/3_smart_ohlc_fetcher.py
+          echo "🚀 Step 4: OHLC Fetcher (Self-Healing Fyers)"
+          python scripts/4_smart_ohlc_fetcher.py
 
-          echo "🚀 Step 4: PnL Closing (1-Min Intraday)"
-          python scripts/4_pnl_processor_1min_closing.py
+          echo "🚀 Step 5: PnL Closing (1-Min Intraday)"
+          python scripts/5_pnl_processor_1min_closing_intraday.py
 
-          echo "🚀 Step 4b: PnL Ledger (Positional)"
-          python scripts/4_pnl_processor_positional.py
+          echo "🚀 Step 6: PnL OHLC (High-Fi Intraday)"
+          python scripts/6_pnl_processor_1min_ohlc_intraday.py
 
-          echo "🚀 Step 5: PnL OHLC (High-Fi Intraday)"
-          python scripts/5_pnl_processor_1min_ohlc.py
-          
-          echo "🚀 Step 6: Daily Strategy PNL Table"
-          python scripts/6_pnl_refresh.py
+          echo "🚀 Step 7: Daily Strategy PNL Table"
+          python scripts/7_pnl_refresh_intraday.py
 
-          echo "🚀 Step 6b: Positional PNL Processor"
+          echo "🚀 Step 8: PnL Ledger (Positional)"
+          python scripts/8_pnl_processor_positional.py
+
+          echo "🚀 Step 9: Positional PNL Processor"
           python scripts/9_positional_pnl_processor.py
 
-          echo "🚀 Step 7: Expectency Update"
-          python scripts/7_expectancy_calc.py
-          
-          echo "🚀 Step 8: Social Media Post Update"
-          python social_repo/scripts/4_personal_broadcast.py
+          echo "🚀 Step 10: Expectency Update"
+          python scripts/10_expectancy_calc.py
 
-          echo "🚀 Step 9: OHLC Cache Cleanup (30-Day Purge)"
-          python scripts/Step8_cleanup_old_ohlc.py
+          echo "🚀 Step 11: OHLC Cache Cleanup (30-Day Purge)"
+          python scripts/11_cleanup_old_ohlc.py
+
+          echo "🚀 Step 12: Social Media Post Update"
+          python social_repo/scripts/4_personal_broadcast.py
 
           echo "✅ FULL PIPELINE COMPLETED SUCCESSFULLY!"

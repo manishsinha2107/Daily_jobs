@@ -1,4 +1,4 @@
-name: ⏱️ Step 4 - PnL Processor (1min closing)
+name: ⏱️ Step 6 - pnl_processor_1min_ohlc_intraday
 on: [workflow_dispatch]
 jobs:
   run-script:
@@ -8,7 +8,7 @@ jobs:
       - uses: actions/setup-python@v4
         with: { python-version: '3.11' }
       - name: Install
-        # ADDED python-dotenv here
+        # PATCH: Added python-dotenv to the installation list
         run: pip install pandas numpy supabase python-dotenv
 
       - name: Run PnL Processor
@@ -17,4 +17,5 @@ jobs:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
         # ADDED: -u for unbuffered logs and a try/except wrapper check
-        run: python -u scripts/4_pnl_processor_1min_closing.py
+        run: python -u scripts/6_pnl_processor_1min_ohlc_intraday.py
+

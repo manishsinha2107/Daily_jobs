@@ -1,4 +1,4 @@
-name: 🔑 Step 0 - Trade Ingestor
+name: 🔑 Step 1 - trade_ingestor
 
 on:
   workflow_dispatch:
@@ -22,4 +22,4 @@ jobs:
           GDRIVE_SERVICE_ACCOUNT_JSON: ${{ secrets.GDRIVE_SERVICE_ACCOUNT_JSON }}
           SOURCE_FOLDER: ${{ secrets.SOURCE_FOLDER }}
           DEST_FOLDER: ${{ secrets.DEST_FOLDER }}
-        run: python scripts/0_trade_ingestor.py
+        run: python scripts/1_trade_ingestor.py

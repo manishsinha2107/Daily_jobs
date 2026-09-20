@@ -1,4 +1,4 @@
-name: 🔑 Step 6 - Backfill_ Daily Strategy PNL Table (10 Chunks)
+name: 🔑 Step z_7 - Backfill_ Daily Strategy PNL Table (10 Chunks)
 
 on:
   workflow_dispatch: # Allows manual trigger from "Actions" tab
@@ -31,4 +31,4 @@ jobs:
           SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
         run: |
           echo "🧪 Running Isolated P&L Sync Test (Chunk ${{ matrix.chunk }}/10)..."
-          python -u scripts/6_Backfill_pnl_refresh.py ${{ matrix.chunk }} 10
+          python -u scripts/z_7_backfill_7_pnl_refresh_intraday ${{ matrix.chunk }} 10

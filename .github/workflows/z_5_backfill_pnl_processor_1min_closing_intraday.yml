@@ -1,4 +1,4 @@
-name: 4 - Backfill_PnL Processor 1Min Closing (10 Chunks)
+name: ⏱️ Step z_5 - Backfill_PnL Processor 1Min Closing (10 Chunks)
 
 on:
   workflow_dispatch: # Allows you to trigger this manually from the GitHub Actions tab
@@ -33,4 +33,4 @@ jobs:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
         # This single line passes the correct chunk number to the script automatically
-        run: python scripts/4_pnl_backfill_processor_1min_closing.py ${{ matrix.chunk }} 10
+        run: python scripts/z_5_backfill_pnl_processor_1min_closing_intraday.py ${{ matrix.chunk }} 10

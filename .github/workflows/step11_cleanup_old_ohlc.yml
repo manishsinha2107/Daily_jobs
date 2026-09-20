@@ -1,4 +1,4 @@
-name: 🧹 Step 8 - Cleanup Old OHLC Cache
+name: 🧹 Step 11 - cleanup_old_ohlc
 
 on:
   workflow_dispatch: # Allows manual trigger from Actions tab
@@ -28,4 +28,4 @@ jobs:
           SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
         run: |
           echo "🧹 Starting OHLC 30-Day Purge..."
-          python -u scripts/Step8_cleanup_old_ohlc.py
+          python -u scripts/11_cleanup_old_ohlc.py
