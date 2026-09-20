@@ -199,6 +199,7 @@ def run_live_positional_ledger():
                     'order_count': order_count,
                     'premium_turnover': round(premium_turnover, 2),
                     'base_qtys': json.dumps(base_qtys),
+                    'has_fallback': False,
                     'updated_at': datetime.now(timezone.utc).isoformat()
                 }
                 all_cycles.append(cycle_record)
