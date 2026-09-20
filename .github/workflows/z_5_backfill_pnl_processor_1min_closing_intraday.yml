@@ -1,4 +1,4 @@
-name: ⏱️ Step z_5 - Backfill_PnL Processor 1Min Closing (10 Chunks)
+name: 🔑 Step z_5 - Backfill_PnL Processor 1Min Closing (10 Chunks)
 
 on:
   workflow_dispatch: # Allows you to trigger this manually from the GitHub Actions tab

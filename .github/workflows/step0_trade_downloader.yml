@@ -1,4 +1,4 @@
-name: 🔑Step 00 - trade_downloader
+name: 🔑 Step 00 - trade_downloader
 
 on:
   workflow_dispatch:

@@ -1,4 +1,4 @@
-name: ⏱️ Step z_6 - Backfill_PnL Processor (1min OHLC) (10 Chunks)
+name: 🔑 Step z_6 - Backfill_PnL Processor (1min OHLC) (10 Chunks)
 on: [workflow_dispatch]
 jobs:
   run-script:
