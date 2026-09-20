@@ -1,4 +1,4 @@
-name: 🔑 TradeTron Smart Downloader
+name: 🔑Step 0 - trade_downloader
 
 on:
   workflow_dispatch:
