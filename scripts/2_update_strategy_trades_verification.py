@@ -238,8 +238,11 @@ def sync_audit_to_shadow():
             "broker_symbol": b_symbol,
             "ohlc_status": status,
             "pnl_status": "pending",
-            "pnl_1min_status": "pending"
+            "pnl_1min_status": "pending",
+            "ledger_status": "pending"
         }
+
+    # Convert back to list for batching  }
 
     # Convert back to list for batching
     payload = list(unique_payloads.values())
