@@ -1,4 +1,4 @@
-name: ⏱️ 🔑Step 5 - pnl_processor_1min_closing_intraday
+name: 🔑 Step 05 - pnl_processor_1min_closing_intraday
 
 on: [workflow_dispatch]
 jobs:

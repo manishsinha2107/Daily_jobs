@@ -1,4 +1,4 @@
-name: 🔑 Step 2 - update_broker_token
+name: 🔑 Step 02 - update_broker_token
 
 on:
   workflow_dispatch:

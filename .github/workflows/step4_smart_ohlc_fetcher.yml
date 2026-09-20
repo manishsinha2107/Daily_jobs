@@ -1,4 +1,4 @@
-name: 📈 Step 4 - Smart OHLC Fetcher (Fyers)
+name: 📈 Step 04 - Smart OHLC Fetcher (Fyers)
 
 on:
   workflow_dispatch:

@@ -1,4 +1,4 @@
-name: 🔑 Step 9 - positional_pnl_processor
+name: 🔑 Step 09 - positional_pnl_processor
 
 on:
   workflow_dispatch: # Manual trigger only

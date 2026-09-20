@@ -1,4 +1,4 @@
-name: 🔑 Step 1 - trade_ingestor
+name: 🔑 Step 01 - trade_ingestor
 
 on:
   workflow_dispatch:

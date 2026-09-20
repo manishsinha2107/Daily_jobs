@@ -1,4 +1,4 @@
-name: 🔑 Step 7 - pnl_refresh_intraday
+name: 🔑 Step 07 - pnl_refresh_intraday
 
 on:
   workflow_dispatch: # Allows manual trigger from "Actions" tab

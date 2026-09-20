@@ -1,4 +1,4 @@
-name: 📝 Step 3 - update_strategy_trades_verification
+name: 📝 Step 03 - update_strategy_trades_verification
 
 on:
   workflow_dispatch:
