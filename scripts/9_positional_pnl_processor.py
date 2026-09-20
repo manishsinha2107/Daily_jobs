@@ -426,10 +426,11 @@ def run_live_positional_curve_rebuilder():
                     daily_orders = 0
                     daily_turnover = 0.0
                     daily_qtys = []
-                    
+
                 daily_net = daily_gross - daily_cost
                 
-                hist_lot_daily = get_historical_lot_size(lot_lookup, index_name, d_str)
+                # Capital calculation anchored to Cycle Entry Date
+                hist_lot_daily = get_historical_lot_size(lot_lookup, index_name, entry_date_str)
                 curr_lot = get_historical_lot_size(lot_lookup, index_name, today_str)
                 unit_cap = base_capital / curr_lot if curr_lot else 0
                 eff_cap_daily = unit_cap * hist_lot_daily
@@ -485,10 +486,11 @@ def run_live_positional_curve_rebuilder():
                 
                 prev_snap = curr_snap
 
-            hist_lot_exit = get_historical_lot_size(lot_lookup, index_name, exit_date_str)
+            # Cycle capital calculation anchored to Cycle Entry Date
+            hist_lot_exit = get_historical_lot_size(lot_lookup, index_name, entry_date_str)
             curr_lot_exit = get_historical_lot_size(lot_lookup, index_name, today_str)
             unit_cap_exit = base_capital / curr_lot_exit if curr_lot_exit else 0
-            eff_cap_exit = unit_cap_exit * hist_lot_exit 
+            eff_cap_exit = unit_cap_exit * hist_lot_exit
             
             cycle_pnl_pct = round((net_pnl / eff_cap_exit * 100), 4) if eff_cap_exit > 0 else 0.0
             cycle_cum_pnl_pct = round((global_running_cum_pnl / eff_cap_exit * 100), 4) if eff_cap_exit > 0 else 0.0
