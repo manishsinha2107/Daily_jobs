@@ -97,9 +97,10 @@ def run_live_positional_ledger():
     offset, limit = 0, 1000
     while True:
         res = supabase.table("strategy_trades_verification") \
-            .select("strategy_id, trade_date, broker_symbol, txn_time, txn_type, quantity, price") \
+            .select("id, strategy_id, trade_date, broker_symbol, txn_time, txn_type, quantity, price") \
             .in_("strategy_id", valid_strat_ids) \
             .eq("ohlc_status", "verified_ohlc_present") \
+            .eq("ledger_status", "pending") \
             .order("txn_time") \
             .range(offset, offset + limit - 1) \
             .execute()
@@ -117,6 +118,7 @@ def run_live_positional_ledger():
     raw_trades['txn_time'] = pd.to_datetime(raw_trades['txn_time'], format='mixed').apply(lambda x: x.replace(tzinfo=None))
     
     all_cycles = []
+    completed_trade_ids = []
     
     for strat_id, strat_trades in raw_trades.groupby('strategy_id'):
         print(f"🔍 Sweeping fills for Strategy ID: {strat_id}...")
@@ -132,6 +134,7 @@ def run_live_positional_ledger():
         order_count = 0
         premium_turnover = 0.0
         base_qtys = []
+        cycle_trade_ids = []
         
         strat_trades = strat_trades.sort_values(by='txn_time')
         
@@ -149,6 +152,7 @@ def run_live_positional_ledger():
             sell_fills += 1 if t_type == 'S' else 0
             premium_turnover += (t_price * t_qty)
             base_qtys.append(t_qty)
+            cycle_trade_ids.append(txn['id'])
             
             freeze_limit = get_historical_freeze_limit(lot_lookup, index_name, t_time)
             order_count += math.ceil(t_qty / freeze_limit)
@@ -198,6 +202,7 @@ def run_live_positional_ledger():
                     'updated_at': datetime.now(timezone.utc).isoformat()
                 }
                 all_cycles.append(cycle_record)
+                completed_trade_ids.extend(cycle_trade_ids)
                 
                 inventory = {}
                 realized_pnl = 0.0
@@ -207,6 +212,7 @@ def run_live_positional_ledger():
                 order_count = 0
                 premium_turnover = 0.0
                 base_qtys = []
+                cycle_trade_ids = []
 
     if all_cycles:
         print(f"📤 Pushing {len(all_cycles)} completed positional cycles to database...")
@@ -222,10 +228,21 @@ def run_live_positional_ledger():
                 print(f"   ❌ Supabase upsert failed for chunk {i}: {e}")
                 upsert_errors += 1
                 
+        # --- NEW: UPDATE LEDGER STATUS FOR COMPLETED TRADES ---
+        if completed_trade_ids:
+            print(f"🔄 Updating ledger_status for {len(completed_trade_ids)} trades...")
+            for i in range(0, len(completed_trade_ids), chunk_size):
+                chunk_ids = completed_trade_ids[i:i + chunk_size]
+                try:
+                    supabase.table("strategy_trades_verification").update({"ledger_status": "completed"}).in_("id", chunk_ids).execute()
+                except Exception as e:
+                    print(f"   ❌ Supabase status update failed for chunk {i}: {e}")
+                    upsert_errors += 1
+
         if upsert_errors == 0:
-            print(f"✅ SUCCESS: {len(all_cycles)} cycles pushed to Supabase cloud.")
+            print(f"✅ SUCCESS: {len(all_cycles)} cycles pushed and {len(completed_trade_ids)} trades marked as completed.")
     else:
-        print("⚠️ No fully closed positional cycles found.")
+        print("⚠️ No new fully closed positional cycles found (pending trades may still be open).")
 
     print(f"\n{'='*60}")
     print("🏁 LIVE POSITIONAL LEDGER BUILD COMPLETE.")
