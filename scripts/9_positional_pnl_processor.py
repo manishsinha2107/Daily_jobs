@@ -321,6 +321,7 @@ def run_live_positional_curve_rebuilder():
         final_summary_payload = []
         
         for _, cycle in strat_cycles.iterrows():
+            cycle_id = str(cycle['cycle_id'])
             entry_date_str = str(cycle['entry_date']).split(' ')[0]
             exit_date_str = str(cycle['exit_date']).split(' ')[0]
             
@@ -481,7 +482,8 @@ def run_live_positional_curve_rebuilder():
                     "premium_turnover": round(daily_turnover, 2),
                     "estimated_costs": round(daily_cost, 2),
                     "net_pnl": round(daily_net, 2),
-                    "base_qtys": json.dumps(daily_qtys)
+                    "base_qtys": json.dumps(daily_qtys),
+                    "cycle_id": cycle_id
                 })
                 
                 prev_snap = curr_snap
@@ -536,7 +538,8 @@ def run_live_positional_curve_rebuilder():
                 "estimated_costs": round(estimated_costs, 2),
                 "net_pnl": round(net_pnl, 2),
                 "base_qtys": cycle['base_qtys'],
-                "has_fallback": False  # Live trades are absolute broker facts
+                "has_fallback": False,  # Live trades are absolute broker facts
+                "cycle_id": cycle_id
             })
             
             print(f"   📅 Anchored Cycle: {exit_date_str} | Gross: ₹{gross_pnl:.2f} | Net: ₹{net_pnl:.2f} | MAE: ₹{max_loss:.2f} | MFE: ₹{max_profit:.2f}")
