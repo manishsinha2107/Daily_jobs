@@ -27,5 +27,5 @@ jobs:
           SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
         run: |
           echo "🧪 Running Isolated P&L Sync Test..."
-          python scripts/7_pnl_refresh.py_intraday
+          python scripts/7_pnl_refresh_intraday.py
 
