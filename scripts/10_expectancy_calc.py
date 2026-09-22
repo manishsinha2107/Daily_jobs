@@ -85,13 +85,28 @@ def run_expectancy_calc():
         if len(chunk) < limit: break
         offset += limit
         
-    df_daily = pd.DataFrame(all_daily_data)
+    df_raw = pd.DataFrame(all_daily_data)
     
-    if df_daily.empty:
+    if df_raw.empty:
         msg = "⚠️ No historical PNL data found for the active strategies."
         print(msg)
         report_heartbeat("success", msg)
         return
+
+    # --- INJECT EOD AGGREGATION TO FLATTEN OVERLAPPING CYCLES ---
+    agg_rules = {col: 'last' for col in df_raw.columns}
+    for col in ['pnl', 'net_pnl', 'estimated_costs', 'premium_turnover', 'buy_fills', 'sell_fills', 'order_count']:
+        if col in df_raw.columns:
+            agg_rules[col] = 'sum'
+            
+    if 'cycle_id' in agg_rules:
+        del agg_rules['cycle_id']
+    del agg_rules['strategy_id']
+    del agg_rules['trade_date']
+    
+    df_daily = df_raw.groupby(['strategy_id', 'trade_date'], as_index=False).agg(agg_rules)
+    df_daily['trade_date'] = pd.to_datetime(df_daily['trade_date']).dt.date.astype(str)
+    df_daily = df_daily.sort_values(['strategy_id', 'trade_date'])
 
     all_expectancy_payloads = []
     now_iso = datetime.utcnow().isoformat()
