@@ -266,42 +266,109 @@ def extract_memory_extremes(strat_id, entry_date_str, exit_date_str, entry_time_
 # =====================================================================
 # LIVE CURVE REBUILDER
 # =====================================================================
+
 def run_live_positional_curve_rebuilder():
     print(f"\n{'='*60}")
-    print("🔄 INITIATING LIVE POSITIONAL CURVE REBUILDER")
+    print("🔄 INITIATING LIVE POSITIONAL CURVE REBUILDER (INCREMENTAL)")
     print(f"{'='*60}\n")
     
-    print("📦 Fetching live positional cycles from ledger...")
-    cycles_data = fetch_all_paginated("positional_trade_ledger")
+    # 1. UNIFIED MASTER FETCH & STATE EXTRACTION
+    master_res = supabase.table("strategies").select(
+        "strategy_id, strategy_name, strategy_full_name, status, deployment_type, strategy_grouping, trades_type, capital, index_name, user_name"
+    ).in_("deployment_type", config.DEPLOYMENT_TYPES).eq("position_type", "Positional").execute()
     
+    if not master_res.data:
+        print("✅ No active Positional strategies found in master table.")
+        return
+
+    strategy_states = {}
+    active_strategies = {}
+    active_ids_int = []
+    
+    print(f"📦 Verifying integrity and state for {len(master_res.data)} strategies...")
+    
+    for s in master_res.data:
+        sid = int(s['strategy_id'])
+        master_cap = float(s.get('capital') or 0.0)
+        master_status = s.get('status')
+        
+        # Fetch exactly ONE row (the latest) from daily_strategy_pnl
+        res = supabase.table("daily_strategy_pnl").select(
+            "trade_date, cumulative_pnl, peak_cumulative_pnl, base_capital"
+        ).eq("strategy_id", sid).order("trade_date", desc=True).limit(1).execute()
+        
+        latest_date = '2000-01-01'
+        cum_pnl = 0.0
+        peak_pnl = 0.0
+        
+        if res.data:
+            row = res.data[0]
+            saved_cap = float(row.get('base_capital') or 0.0)
+            
+            # Check Capital Mismatch
+            if saved_cap != master_cap:
+                if master_status == 'Active':
+                    print(f"   ⚠️ CAPITAL MISMATCH for ID {sid} (Saved: {saved_cap} | Master: {master_cap}). Forcing soft recalculation.")
+            else:
+                latest_date = row['trade_date']
+                cum_pnl = float(row.get('cumulative_pnl') or 0.0)
+                peak_pnl = float(row.get('peak_cumulative_pnl') or 0.0)
+                
+        if master_status == 'Active':
+            strategy_states[sid] = {
+                'latest_date': latest_date,
+                'cum_pnl': cum_pnl,
+                'peak_pnl': peak_pnl
+            }
+            active_ids_int.append(sid)
+            active_strategies[sid] = s
+
+    if not active_strategies:
+        print("✅ No active strategies require math calculations today.")
+        return
+
+    print("📦 Fetching metadata, lot sizes, and taxes from Supabase...")
+    lot_lookup = build_lot_size_lookup(fetch_all_paginated("lot_sizes"))
+    tax_lookup = build_tax_lookup(fetch_all_paginated("market_tax_rates"))
+    today_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+
+    global_min_date = min([state['latest_date'] for state in strategy_states.values()])
+    
+    print(f"🔎 Bulk fetching active positional cycles exiting after {global_min_date}...")
+    
+    # 2. BOUNDED LEDGER FETCH
+    cycles_data = []
+    offset, limit = 0, 1000
+    while True:
+        res = supabase.table("positional_trade_ledger").select("*") \
+            .in_("strategy_id", active_ids_int) \
+            .gt("exit_date", global_min_date) \
+            .range(offset, offset + limit - 1).execute()
+        chunk = res.data
+        if not chunk: break
+        cycles_data.extend(chunk)
+        if len(chunk) < limit: break
+        offset += limit
+        
     if not cycles_data:
-        print("✅ No closed live positional cycles found to process.")
+        print("✅ Already up to date. No new closed live positional cycles found to process.")
         return
         
     cycles_df = pd.DataFrame(cycles_data)
-    
     cycles_df['exit_time_sort'] = pd.to_datetime(cycles_df['exit_time'])
     cycles_df = cycles_df.sort_values(['strategy_id', 'exit_time_sort']).drop(columns=['exit_time_sort'])
 
-    print("📦 Fetching metadata, lot sizes, and taxes from Supabase...")
-    
-    master_res = supabase.table("strategies").select("*") \
-        .eq("position_type", "Positional") \
-        .in_("deployment_type", config.DEPLOYMENT_TYPES) \
-        .execute()
-    
-    master_meta = {int(s['strategy_id']): s for s in master_res.data}
-    
-    lot_lookup = build_lot_size_lookup(fetch_all_paginated("lot_sizes"))
-    tax_lookup = build_tax_lookup(fetch_all_paginated("market_tax_rates"))
-    
-    today_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-
     for strat_id, strat_cycles in cycles_df.groupby('strategy_id'):
-        meta = master_meta.get(int(strat_id))
+        strat_id = int(strat_id)
+        meta = active_strategies.get(strat_id)
+        state = strategy_states.get(strat_id)
         
-        if not meta:
-            print(f"⚠️ ERROR: Strategy {strat_id} metadata missing or not authorized. Skipping.")
+        if not meta or not state:
+            continue
+            
+        # 3. FILTER AND SEED
+        strat_cycles = strat_cycles[strat_cycles['exit_date'] > state['latest_date']]
+        if strat_cycles.empty:
             continue
             
         strat_name = meta.get('strategy_full_name') or meta.get('strategy_name') or f"ID {strat_id}"
@@ -314,8 +381,9 @@ def run_live_positional_curve_rebuilder():
         
         print(f"\n⚙️ Rebuilding Positional Curve For: {strat_name} (ID: {strat_id})")
         
-        global_running_cum_pnl = 0.0
-        global_running_peak = 0.0
+        # Anchor the accumulators to the checkpoint state
+        global_running_cum_pnl = state['cum_pnl']
+        global_running_peak = state['peak_pnl']
         
         final_daily_payload = []
         final_summary_payload = []
