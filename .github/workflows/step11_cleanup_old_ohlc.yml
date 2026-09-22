@@ -27,4 +27,4 @@ jobs:
           SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
         run: |
           echo "🧹 Starting OHLC 30-Day Purge..."
-          python -u scripts/11_cleanup_old_ohlc.py
+          python scripts/11_cleanup_old_ohlc.py
