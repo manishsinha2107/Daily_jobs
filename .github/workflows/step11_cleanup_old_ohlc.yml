@@ -2,8 +2,7 @@ name: 🧹 Step 11 - cleanup_old_ohlc
 
 on:
   workflow_dispatch: # Allows manual trigger from Actions tab
-  schedule:
-    - cron: '0 2 * * *' # Optional: Automatically runs daily at 2:00 AM UTC
+
 
 jobs:
   run-cleanup:
