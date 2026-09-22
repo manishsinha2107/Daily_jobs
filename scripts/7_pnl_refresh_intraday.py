@@ -393,7 +393,8 @@ def run_pnl_refresh():
                     "base_qtys": daily_base_qtys,
                     "estimated_costs": round(estimated_costs, 2),
                     "net_pnl": round(daily_net_pnl, 2),
-                    "updated_at": datetime.now(timezone.utc).isoformat()
+                    "updated_at": datetime.now(timezone.utc).isoformat(),
+                    "cycle_id": "INTRADAY"
                 })
                 
                 print(f"[SUCCESS] Prepared data for: {strat_name} on {t_date_str} (Cap: {round(eff_cap, 2)}, Mult: {multiplier}, Type: {deploy_type}, Status: {strat_meta['status']})")
