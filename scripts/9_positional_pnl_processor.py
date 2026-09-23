@@ -88,15 +88,27 @@ def build_tax_lookup(tax_data):
         lookup[seg].sort(key=lambda x: x['effective_date'], reverse=True)
     return lookup
 
+# commented after
 def get_historical_tax(lookup, segment, target_date_str):
     target_dt_str = str(target_date_str).split(' ')[0]
     valid_taxes = [t for t in lookup[segment] if t['effective_date'] <= target_dt_str]
     if not valid_taxes: return lookup[segment][-1] 
     return valid_taxes[0]
 
+def build_deployment_lookup(deploy_data):
+    lookup = {}
+    for row in deploy_data:
+        try:
+            sid = str(row['strategy_id'])
+            month_str = datetime.strptime(str(row['month']).split('T')[0], "%Y-%m-%d").replace(day=1).strftime("%Y-%m-%d")
+            lookup[f"{sid}_{month_str}"] = int(float(row['multiplier']))
+        except Exception: pass
+    return lookup
+
 # =====================================================================
 # LIVE MEMORY ENGINE: 1-MINUTE MAE/MFE CALCULATOR & DAILY SNAPSHOTS
 # =====================================================================
+
 def extract_memory_extremes(strat_id, entry_date_str, exit_date_str, entry_time_str, exit_time_str):
     
     # 1. PERFECT TIMEZONE STRIPPING
@@ -327,9 +339,10 @@ def run_live_positional_curve_rebuilder():
         print("✅ No active strategies require math calculations today.")
         return
 
-    print("📦 Fetching metadata, lot sizes, and taxes from Supabase...")
+    print("📦 Fetching metadata, lot sizes, taxes, and deployments from Supabase...")
     lot_lookup = build_lot_size_lookup(fetch_all_paginated("lot_sizes"))
     tax_lookup = build_tax_lookup(fetch_all_paginated("market_tax_rates"))
+    deploy_lookup = build_deployment_lookup(fetch_all_paginated("live_deployments"))
     today_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
 
     global_min_date = min([state['latest_date'] for state in strategy_states.values()])
@@ -498,11 +511,25 @@ def run_live_positional_curve_rebuilder():
 
                 daily_net = daily_gross - daily_cost
                 
+                # Dynamic Daily Multiplier Lookup
+                target_month_iso_daily = datetime.strptime(d_str, "%Y-%m-%d").replace(day=1).strftime("%Y-%m-%d")
+                multiplier_key_daily = f"{strat_id}_{target_month_iso_daily}"
+                deploy_type = meta.get('deployment_type', 'Live Offline')
+                
+                if multiplier_key_daily in deploy_lookup:
+                    daily_multiplier = deploy_lookup[multiplier_key_daily]
+                elif deploy_type == 'Live Auto':
+                    error_msg = f"❌ FATAL ERROR: Live Auto ID {strat_id} ({strat_name}) missing multiplier for {target_month_iso_daily}."
+                    print(error_msg)
+                    raise KeyError(error_msg) 
+                else:
+                    daily_multiplier = 1
+                
                 # Capital calculation anchored to Cycle Entry Date
                 hist_lot_daily = get_historical_lot_size(lot_lookup, index_name, entry_date_str)
                 curr_lot = get_historical_lot_size(lot_lookup, index_name, today_str)
                 unit_cap = base_capital / curr_lot if curr_lot else 0
-                eff_cap_daily = unit_cap * hist_lot_daily
+                eff_cap_daily = unit_cap * hist_lot_daily * daily_multiplier
                 
                 daily_pnl_pct = round((daily_net / eff_cap_daily * 100), 4) if eff_cap_daily > 0 else 0.0
                 
@@ -523,10 +550,10 @@ def run_live_positional_curve_rebuilder():
                     "user_name": meta.get('user_name', ''),
                     "strategy_grouping": meta.get('strategy_grouping', ''),
                     "status": meta.get('status', 'Active'),
-                    "deployment_type": meta.get('deployment_type', 'Live Offline'),
+                    "deployment_type": deploy_type,
                     "pnl": round(daily_gross, 2),
                     "eff_capital": round(eff_cap_daily, 2),
-                    "multiplier": 1,
+                    "multiplier": int(daily_multiplier),
                     "is_win": 1 if daily_net > 0 else 0,
                     "pnl_percent": daily_pnl_pct,
                     "cumulative_pnl": round(global_running_cum_pnl, 2),
@@ -556,11 +583,26 @@ def run_live_positional_curve_rebuilder():
                 
                 prev_snap = curr_snap
 
+
+            # Cycle Multiplier based strictly on Entry Date
+            target_month_iso_entry = datetime.strptime(entry_date_str, "%Y-%m-%d").replace(day=1).strftime("%Y-%m-%d")
+            multiplier_key_cycle = f"{strat_id}_{target_month_iso_entry}"
+            deploy_type = meta.get('deployment_type', 'Live Offline')
+            
+            if multiplier_key_cycle in deploy_lookup:
+                cycle_multiplier = deploy_lookup[multiplier_key_cycle]
+            elif deploy_type == 'Live Auto':
+                error_msg = f"❌ FATAL ERROR: Live Auto ID {strat_id} ({strat_name}) missing multiplier for {target_month_iso_entry}."
+                print(error_msg)
+                raise KeyError(error_msg) 
+            else:
+                cycle_multiplier = 1
+
             # Cycle capital calculation anchored to Cycle Entry Date
             hist_lot_exit = get_historical_lot_size(lot_lookup, index_name, entry_date_str)
             curr_lot_exit = get_historical_lot_size(lot_lookup, index_name, today_str)
             unit_cap_exit = base_capital / curr_lot_exit if curr_lot_exit else 0
-            eff_cap_exit = unit_cap_exit * hist_lot_exit
+            eff_cap_exit = unit_cap_exit * hist_lot_exit * cycle_multiplier
             
             cycle_pnl_pct = round((net_pnl / eff_cap_exit * 100), 4) if eff_cap_exit > 0 else 0.0
             cycle_cum_pnl_pct = round((global_running_cum_pnl / eff_cap_exit * 100), 4) if eff_cap_exit > 0 else 0.0
@@ -578,10 +620,10 @@ def run_live_positional_curve_rebuilder():
                 "user_name": meta.get('user_name', ''),
                 "strategy_grouping": meta.get('strategy_grouping', ''),
                 "status": meta.get('status', 'Active'),
-                "deployment_type": meta.get('deployment_type', 'Live Offline'),
+                "deployment_type": deploy_type,
                 "pnl": round(gross_pnl, 2),
                 "eff_capital": round(eff_cap_exit, 2),
-                "multiplier": 1,
+                "multiplier": int(cycle_multiplier),
                 "is_win": 1 if net_pnl > 0 else 0,
                 "pnl_percent": cycle_pnl_pct,
                 "cumulative_pnl": round(global_running_cum_pnl, 2),
