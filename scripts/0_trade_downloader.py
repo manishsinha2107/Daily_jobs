@@ -77,7 +77,7 @@ async def run_smart_downloader():
     # Base query for Active strategies and Deployment Types
     # UPDATED: Changed strategy_name to strategy_full_name
     query = supabase.table("strategies") \
-        .select("user_email, email_password, strategy_full_name, strategy_id, deployment_type") \
+        .select("user_email, email_password, strategy_full_name, strategy_id, deployment_type, position_type") \
         .eq("status", "Active") \
         .in_("deployment_type", config.DEPLOYMENT_TYPES)
         
@@ -159,11 +159,19 @@ async def run_smart_downloader():
                         await asyncio.sleep(5) 
 
                         container = page.locator(f"div.strategy__section:has(a:text-is('{strat_name}'))").first
-                        
+
                         if await container.count() > 0:
                             status_text = await container.inner_text()
-                            if "Exited" in status_text:
-                                log(f"🎯 Match found & EXITED. Downloading...")
+                            pos_type = str(row.get('position_type', '')).strip()
+                            
+                            should_download = False
+                            if pos_type == "Intraday" and "Exited" in status_text:
+                                should_download = True
+                            elif pos_type == "Positional" and ("Exited" in status_text or "Live-Entered" in status_text):
+                                should_download = True
+                                
+                            if should_download:
+                                log(f"🎯 Match found & condition met for {pos_type}. Downloading...")
                                 await container.locator('button[id*="More"]').click()
                                 
                                 async with page.expect_download() as download_info:
@@ -186,7 +194,7 @@ async def run_smart_downloader():
                                     
                                 upload_to_drive(temp_path, final_filename)
                             else:
-                                log(f"⏭️ {strat_name} found, but status is NOT 'Exited'.")
+                                log(f"⏭️ {strat_name} found, but status/position_type condition not met.")
                         else:
                             log(f"❓ ERROR: Strategy '{strat_name}' not found.")
                 except Exception as e:
