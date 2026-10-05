@@ -1,0 +1,29 @@
+name: Probe Strategy State
+
+on:
+  workflow_dispatch: # Allows you to manually trigger this script from the Actions tab in GitHub
+
+jobs:
+  run-probe:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v3
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+
+      - name: Install Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install supabase python-dotenv pandas
+
+      - name: Run Strategy Probe Script
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+        run: |
+          python probe_script.py
