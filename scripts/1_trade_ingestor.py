@@ -57,13 +57,25 @@ def get_drive_token():
     creds.refresh(auth_request)
     return creds.token
 
+# [MODULE/CLASS SSOT ROLE]: Strategy Identity Mapper
+# [FUNCTION CONTRACT & MATH]: Fetches active strategy IDs and maps both short names and full names to their canonical IDs.
 def get_active_strategies():
-    # UPDATED: Changed strategy_name to strategy_full_name in the select query
-    res = supabase.table("strategies").select("strategy_id,strategy_full_name").eq("status", "Active").in_("deployment_type", config.DEPLOYMENT_TYPES).execute()
+    # [TECHNICAL]: Re-adds 'strategy_name' to the select query and builds a dual-key name map to catch any valid broker file naming convention.
+    # [BUSINESS / DOMAIN LOGIC]: Ensures broker files named with either the short strategy name or the full strategy name are accurately ingested, preventing pipeline starvation at Step 1.
+    res = supabase.table("strategies").select("strategy_id,strategy_name,strategy_full_name").eq("status", "Active").in_("deployment_type", config.DEPLOYMENT_TYPES).execute()
     data = res.data
-    # UPDATED: Mapping now uses strategy_full_name as the key
-    return {str(i['strategy_full_name']).strip(): str(i['strategy_id']) for i in data}, \
-           {str(i['strategy_id']).strip(): str(i['strategy_id']) for i in data}
+    
+    name_map = {}
+    for i in data:
+        sid = str(i['strategy_id']).strip()
+        if i.get('strategy_name'):
+            name_map[str(i['strategy_name']).strip()] = sid
+        if i.get('strategy_full_name'):
+            name_map[str(i['strategy_full_name']).strip()] = sid
+            
+    id_map = {str(i['strategy_id']).strip(): str(i['strategy_id']).strip() for i in data}
+    
+    return name_map, id_map
 
 def move_drive_file(file_id, file_name, token):
     try:
