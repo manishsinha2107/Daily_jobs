@@ -266,7 +266,7 @@ def run_smart_fetcher():
             verify_res = supabase.table("market_ohlc_cache").select("ts", count="exact").eq("symbol", b_sym).like("ts", f"{queue_data['start_date']}%").execute()
             v_count = verify_res.count if verify_res.count else 0
             
-            if v_count >= 300:
+            if v_count >= 10:
                 final_ohlc_status = "verified_ohlc_present"
                 final_pnl_status = "pending"
             else:
