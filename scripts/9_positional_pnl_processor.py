@@ -105,6 +105,29 @@ def build_deployment_lookup(deploy_data):
         except Exception: pass
     return lookup
 
+# [MODULE/CLASS SSOT ROLE]: Live Mapped Positional Data Fetcher
+# [FUNCTION CONTRACT & MATH]: Supabase-only pagination wrapper to fetch overlap cycle_ids.
+def fetch_live_positional_mapping(la_mapping_id):
+    # [TECHNICAL]: Reconstructs the exact EntryDate_ExitDate string from the fetched cycle_id.
+    # [BUSINESS / DOMAIN LOGIC]: Enables Live Offline vs Live Auto calibration math inside the live processor natively.
+    live_map = {}
+    offset, limit = 0, 500
+    while True:
+        res = supabase.table("positional_cycle_summary") \
+            .select("cycle_id, pnl") \
+            .eq("strategy_id", la_mapping_id) \
+            .range(offset, offset + limit - 1).execute()
+        chunk = res.data
+        if not chunk: break
+        for row in chunk:
+            parts = str(row.get('cycle_id', '')).split('-')
+            if len(parts) >= 4:
+                match_key = f"{parts[2][:8]}_{parts[3][:8]}"
+                live_map[match_key] = float(row['pnl'])
+        if len(chunk) < limit: break
+        offset += limit
+    return live_map
+
 # =====================================================================
 # LIVE MEMORY ENGINE: 1-MINUTE MAE/MFE CALCULATOR & DAILY SNAPSHOTS
 # =====================================================================
@@ -391,9 +414,18 @@ def run_live_positional_curve_rebuilder():
             raise KeyError(f"❌ 'index_name' missing in database metadata for Strategy ID {strat_id}")
             
         base_capital = float(meta.get('capital', 0.0))
+        la_mapping_id = meta.get('la_mapping_id')
         
         print(f"\n⚙️ Rebuilding Positional Curve For: {strat_name} (ID: {strat_id})")
         
+        # --- EXTRACT LIVE OVERLAPS (IF MAPPED) ---
+        # [MODULE/CLASS SSOT ROLE]: Live Overlap Integrator
+        # [FUNCTION CONTRACT & MATH]: Validates mapped strategies and triggers live positional mappings.
+        live_cycle_map = {}
+        if la_mapping_id:
+            print(f"   🔗 Fetching Live Positional overlap data for mapped ID: {la_mapping_id}...")
+            live_cycle_map = fetch_live_positional_mapping(la_mapping_id)
+
         # Anchor the accumulators to the checkpoint state
         global_running_cum_pnl = state['cum_pnl']
         global_running_peak = state['peak_pnl']
@@ -438,6 +470,22 @@ def run_live_positional_curve_rebuilder():
             
             estimated_costs = exchange_fee + stt + stamp_duty + sebi_fee + brokerage + gst
             net_pnl = gross_pnl - estimated_costs
+            
+            # --- CALCULATE CYCLE OVERLAP ---
+            # [MODULE/CLASS SSOT ROLE]: Overlap Application Logic
+            # [FUNCTION CONTRACT & MATH]: Calculates slippage dynamically using the strict `match_key`.
+            cycle_overlap_live = None
+            cycle_overlap_slippage = None
+            
+            # [TECHNICAL]: Splits the cycle_id into exact Entry_Exit components to guarantee 1:1 overlap fidelity.
+            cycle_match_key = None
+            parts = str(cycle_id).split('-')
+            if len(parts) >= 4:
+                cycle_match_key = f"{parts[2][:8]}_{parts[3][:8]}"
+            
+            if cycle_match_key and cycle_match_key in live_cycle_map:
+                cycle_overlap_live = live_cycle_map[cycle_match_key]
+                cycle_overlap_slippage = cycle_overlap_live - float(cycle['gross_pnl'])
             
             # Pass correct dates to safely query Supabase
             max_profit, mp_time, max_loss, ml_time, daily_snapshots = extract_memory_extremes(
@@ -578,6 +626,8 @@ def run_live_positional_curve_rebuilder():
                     "estimated_costs": round(daily_cost, 2),
                     "net_pnl": round(daily_net, 2),
                     "base_qtys": json.dumps(daily_qtys),
+                    "overlap_live_pnl": None,
+                    "overlap_slippage_amount": None,
                     "cycle_id": cycle_id
                 })
                 
@@ -649,6 +699,8 @@ def run_live_positional_curve_rebuilder():
                 "net_pnl": round(net_pnl, 2),
                 "base_qtys": cycle['base_qtys'],
                 "has_fallback": False,  # Live trades are absolute broker facts
+                "overlap_live_pnl": round(cycle_overlap_live, 2) if cycle_overlap_live is not None else None,
+                "overlap_slippage_amount": round(cycle_overlap_slippage, 2) if cycle_overlap_slippage is not None else None,
                 "cycle_id": cycle_id
             })
             
