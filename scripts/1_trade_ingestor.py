@@ -120,9 +120,12 @@ def run_ingestion():
             print(f"📂 [Processing {idx+1}/{total_files}]: {file_name}")
             update_heartbeat("running", f"🔄 File {idx+1}/{total_files}: {file_name[:15]}...")
 
-            # --- STRATEGY MAPPING LOGIC ---
+            # [MODULE/CLASS SSOT ROLE]: Filename Prefix Strategy Extractor
+            # [FUNCTION CONTRACT & MATH]: Extracts the leading strategy ID number from the Google Drive filename.
             strategy_id = None
-            s_match = re.match(r'^(\d{8})_', file_name)
+            # [TECHNICAL]: Replaced strict 8-digit limit (\d{8}) with dynamic digit matching (\d+) to support both 8-digit and 9-digit strategy IDs.
+            # [BUSINESS / DOMAIN LOGIC]: Prevents 9-digit live positional files (e.g., 999007878_...) from being falsely skipped with 'No ID found'.
+            s_match = re.match(r'^(\d+)_', file_name)
             
             if s_match and s_match.group(1) in id_map:
                 strategy_id = id_map[s_match.group(1)]
