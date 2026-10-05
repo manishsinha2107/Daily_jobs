@@ -209,7 +209,7 @@ async def run_smart_downloader():
                             should_download = False
                             if pos_type == "Intraday" and "Exited" in status_text:
                                 should_download = True
-                            elif pos_type == "Positional" and ("Exited" in status_text or "Live-Entered" in status_text):
+                            elif pos_type == "Positional" and ("Exited" in status_text or "Live-Entered" in status_text or "Active" in status_text):
                                 should_download = True
                                 
                             if should_download:
