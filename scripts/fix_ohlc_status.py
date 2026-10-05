@@ -1,6 +1,5 @@
 import os
 import sys
-from datetime import datetime, timezone
 from dotenv import load_dotenv
 from supabase import create_client, Client
 
@@ -21,7 +20,7 @@ def fix_ohlc_verification_status():
     print("🔍 INITIATING OHLC STATUS RE-SYNC & FIXER")
     print(f"{'='*60}\n")
 
-    # 1. Fetch all records where ohlc_status is 'missing_ohlc_at_vault'
+    # 1. Paginated fetch for all records where ohlc_status is 'missing_ohlc_at_vault'
     all_records = []
     offset, limit = 0, 1000
     while True:
@@ -60,11 +59,11 @@ def fix_ohlc_verification_status():
 
         if candle_count > 0:
             print(f"  ✨ Found {candle_count} candle(s) in cache for {symbol} on {trade_date}. Upgrading status...")
+            # Updated to omit 'updated_at' which doesn't exist in strategy_trades_verification schema
             supabase.table("strategy_trades_verification").update({
                 "ohlc_status": "verified_ohlc_present",
                 "pnl_status": "pending",
-                "pnl_1min_status": "pending",
-                "updated_at": datetime.now(timezone.utc).isoformat()
+                "pnl_1min_status": "pending"
             }).eq("id", rec_id).execute()
             updated_count += 1
         else:
