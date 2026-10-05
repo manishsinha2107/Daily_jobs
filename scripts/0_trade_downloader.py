@@ -212,12 +212,17 @@ async def run_smart_downloader():
                             elif pos_type == "Positional" and ("Exited" in status_text or "Live-Entered" in status_text or "Active" in status_text):
                                 should_download = True
                                 
+
                             if should_download:
                                 log(f"🎯 Match found & condition met for {pos_type}. Downloading...")
-                                await container.locator('button[id*="More"]').click()
+                                # [TECHNICAL]: Inject force=True to bypass Playwright's strict physical layer actionability checks.
+                                # [TRADING DOMAIN]: Ensures the scraper clicks the 'More' dropdown even if the WhatsApp Terms modal unexpectedly covers the screen during the loop iteration.
+                                await container.locator('button[id*="More"]').click(force=True)
                                 
                                 async with page.expect_download() as download_info:
-                                    await container.locator('a:has-text("Download Data")').click()
+                                    # [TECHNICAL]: Inject force=True to bypass the same modal intercept for the download trigger.
+                                    # [TRADING DOMAIN]: Guarantees the actual CSV is requested and downloaded successfully.
+                                    await container.locator('a:has-text("Download Data")').click(force=True)
                                 
                                 download = await download_info.value
                                 temp_path = await download.path()
