@@ -17,9 +17,9 @@ def get_dynamic_freeze_limit(strat_id, trade_date):
         index_name = strat_res.data[0].get('index_name')
         
         # 2. Fetch freeze limit based on exact trade date
-        lot_res = supabase.table("lot_sizes").select("freeze_limit").eq("instrument", index_name).lte("effective_date", trade_date).order("effective_date", desc=True).limit(1).execute()
-        if lot_res.data and lot_res.data[0].get('freeze_limit'):
-            limit = int(lot_res.data[0]['freeze_limit'])
+        limit_res = supabase.table("freeze_limits").select("freeze_limit").eq("instrument", index_name).lte("effective_date", trade_date).order("effective_date", desc=True).limit(1).execute()
+        if limit_res.data and limit_res.data[0].get('freeze_limit'):
+            limit = int(limit_res.data[0]['freeze_limit'])
             return limit if limit > 0 else 1000000
         return 1000000
     except Exception as e:

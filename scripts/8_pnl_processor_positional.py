@@ -38,6 +38,7 @@ def fetch_all_paginated(table_name, select_query="*"):
         offset += limit
     return all_data
 
+
 # =====================================================================
 # HELPER: HISTORICAL FREEZE LIMIT LOOKUP
 # =====================================================================
@@ -51,20 +52,30 @@ def build_lot_size_lookup(lot_data):
         lookup[idx].sort(key=lambda x: x['effective_date'], reverse=True)
     return lookup
 
+def build_freeze_limit_lookup(freeze_data):
+    lookup = {}
+    for row in freeze_data:
+        idx = row['instrument']
+        if idx not in lookup: lookup[idx] = []
+        lookup[idx].append(row)
+    for idx in lookup:
+        lookup[idx].sort(key=lambda x: x['effective_date'], reverse=True)
+    return lookup
+
 def get_historical_freeze_limit(lookup, index_name, target_date_str):
     if index_name not in lookup or not lookup[index_name]: 
-        raise ValueError(f"❌ Missing lot size/freeze limit data in DB for index {index_name}")
+        raise ValueError(f"❌ Missing freeze limit data in DB for index {index_name}")
     
     target_dt_str = str(target_date_str).split(' ')[0]
-    first_of_month = datetime.strptime(target_dt_str, "%Y-%m-%d").replace(day=1).strftime("%Y-%m-%d")
+    # Removed `.replace(day=1)` truncation to allow exact mid-month point-in-time matching
     
-    valid_lots = [lot for lot in lookup[index_name] if lot['effective_date'] <= first_of_month]
-    if not valid_lots: 
-        raise ValueError(f"❌ No valid historical freeze limit found for {index_name} on or before {first_of_month}")
+    valid_limits = [limit for limit in lookup[index_name] if limit['effective_date'] <= target_dt_str]
+    if not valid_limits: 
+        raise ValueError(f"❌ No valid historical freeze limit found for {index_name} on or before {target_dt_str}")
         
-    limit = valid_lots[0].get('freeze_limit')
+    limit = valid_limits[0].get('freeze_limit')
     if not limit or int(limit) <= 0:
-        raise ValueError(f"❌ Invalid or missing freeze limit in DB for {index_name} on or before {first_of_month}")
+        raise ValueError(f"❌ Invalid or missing freeze limit in DB for {index_name} on or before {target_dt_str}")
         
     return int(limit)
 
@@ -89,8 +100,9 @@ def run_live_positional_ledger():
     strategy_lookup = {int(row['strategy_id']): row['index_name'] for row in strat_res.data}
     valid_strat_ids = list(strategy_lookup.keys())
     
-    lot_data = fetch_all_paginated("lot_sizes")
-    lot_lookup = build_lot_size_lookup(lot_data)
+    # Fetch freeze limits independently
+    freeze_data = fetch_all_paginated("freeze_limits")
+    freeze_lookup = build_freeze_limit_lookup(freeze_data)
 
     print("📡 Querying verified positional trade logs from Supabase...")
     all_trades = []
@@ -154,7 +166,7 @@ def run_live_positional_ledger():
             base_qtys.append(t_qty)
             cycle_trade_ids.append(txn['id'])
             
-            freeze_limit = get_historical_freeze_limit(lot_lookup, index_name, t_time)
+            freeze_limit = get_historical_freeze_limit(freeze_lookup, index_name, t_time)
             order_count += math.ceil(t_qty / freeze_limit)
 
             if sym not in inventory or inventory[sym]['qty'] == 0:
