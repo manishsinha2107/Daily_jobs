@@ -212,12 +212,15 @@ async def run_smart_downloader():
                             elif pos_type == "Positional" and ("Exited" in status_text or "Live-Entered" in status_text or "Active" in status_text):
                                 should_download = True
                                 
-
                             if should_download:
                                 log(f"🎯 Match found & condition met for {pos_type}. Downloading...")
                                 # [TECHNICAL]: Inject force=True to bypass Playwright's strict physical layer actionability checks.
                                 # [TRADING DOMAIN]: Ensures the scraper clicks the 'More' dropdown even if the WhatsApp Terms modal unexpectedly covers the screen during the loop iteration.
                                 await container.locator('button[id*="More"]').click(force=True)
+                                
+                                # [TECHNICAL]: Manual event-loop yield for 1500ms.
+                                # [TRADING DOMAIN]: Gives the Bootstrap UI dropdown menu sufficient time to physically render and mount the "Download Data" link before clicking it into the void.
+                                await asyncio.sleep(1.5)
                                 
                                 async with page.expect_download() as download_info:
                                     # [TECHNICAL]: Inject force=True to bypass the same modal intercept for the download trigger.
