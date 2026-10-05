@@ -137,16 +137,58 @@ async def run_smart_downloader():
                     log(f"🔑 [{account_idx}/{total_accounts}] Target Account: {email}")
                     await page.goto("https://tradetron.tech/deployed-strategies", wait_until="load", timeout=90000)
                     
-                    login_area = page.locator('#main')
-                    await login_area.locator('input[name="email"]').fill(email)
-                    await login_area.locator('input[name="password"]').fill(group.iloc[0]['email_password'])
+                    # [TECHNICAL]: Stage 1 - Pre-Login Theme Gate (Welcome Modal Intercept).
+                    # [TRADING DOMAIN]: Bypasses the new UI welcome screen to ensure the scraper interacts with the classic DOM structure.
+                    try:
+                        classic_theme_btn = page.locator('button.tt-wel__btn--ghost:has-text("Use the classic theme")')
+                        if await classic_theme_btn.is_visible(timeout=4000):
+                            log("🛡️ Welcome modal detected. Clicking 'Use the classic theme'...")
+                            await classic_theme_btn.click()
+                            await page.wait_for_load_state("networkidle")
+                    except Exception:
+                        pass
 
-                    altcha = login_area.locator('altcha-widget')
-                    if await altcha.is_visible():
+                    # [TECHNICAL]: Stage 2 - Language Nudge Dismissal.
+                    # [TRADING DOMAIN]: Clears the footer language popup to prevent click interception on login inputs.
+                    try:
+                        lang_nudge = page.locator('a.tt-lang-nudge__no:has-text("Continue in English")')
+                        if await lang_nudge.is_visible(timeout=2000):
+                            log("🌐 Language nudge detected. Clicking 'Continue in English'...")
+                            await lang_nudge.click()
+                    except Exception:
+                        pass
+
+                    # [TECHNICAL]: Stage 3 - Resilient Login Credential Injection & CAPTCHA.
+                    # [TRADING DOMAIN]: Universally identifies credential fields irrespective of Tradetron's page wrappers and handles CAPTCHA asynchronously.
+                    log("✍️ Locating credential fields...")
+                    email_input = page.locator('input[name="email"], input[type="email"]').first
+                    password_input = page.locator('input[name="password"], input[type="password"]').first
+                    
+                    await email_input.fill(email, timeout=30000)
+                    await password_input.fill(group.iloc[0]['email_password'], timeout=30000)
+                    
+                    try:
+                        altcha = page.locator('altcha-widget').first
+                        await altcha.wait_for(state="visible", timeout=5000)
+                        log("🛡️️ Handling Altcha Widget...")
                         await altcha.locator('.altcha-checkbox').click()
                         await altcha.locator('text=Verified').wait_for(state="visible", timeout=30000)
+                    except Exception:
+                        log("🛡️ No Altcha widget required or detected within 5s. Proceeding...")
+                    
+                    await page.locator('button:has-text("Sign in"), button:has-text("Sign In")').first.click()
 
-                    await login_area.locator('button:has-text("Sign In")').click()
+                    # [TECHNICAL]: Stage 4 - Post-Login Intercept (WhatsApp Terms Modal) & Target Acquisition.
+                    # [TRADING DOMAIN]: Clears terms modals that block the strategy list, then waits for the search input to prove full dashboard load.
+                    try:
+                        log("⏳ Waiting for dashboard or post-login modals...")
+                        later_btn = page.locator('button.tt-wat__btn--ghost[data-wat-later], button:has-text("Later")').first
+                        if await later_btn.is_visible(timeout=15000):
+                            log("📱 WhatsApp Terms Modal detected. Clicking 'Later'...")
+                            await later_btn.click()
+                    except Exception:
+                        pass
+                        
                     await page.wait_for_selector('#search_input', timeout=60000)
 
                     for _, row in group.iterrows():
