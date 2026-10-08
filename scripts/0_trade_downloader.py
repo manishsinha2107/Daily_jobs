@@ -96,9 +96,14 @@ async def run_smart_downloader():
 
     df = pd.DataFrame(res.data)
 
+    # [MODULE/CLASS SSOT ROLE]: Distributed Matrix Orchestrator
+    # [FUNCTION CONTRACT & MATH]: Executes targeted modulo arithmetic using the SSOT config limit.
     # --- MATRIX CHUNKING LOGIC ---
     chunk_index = int(os.environ.get("CHUNK_INDEX", "0"))
-    total_chunks = 10
+    
+    # [TECHNICAL]: Dynamically links the modulo base to the config.py global variable.
+    # [BUSINESS / DOMAIN LOGIC]: Prevents 80% email starvation scenarios by keeping Python math exactly synchronized with GitHub Action's spawned jobs.
+    total_chunks = config.MATRIX_CHUNKS
 
     # Get unique emails and sort alphabetically for consistency across all runners
     unique_emails = sorted(df['user_email'].unique().tolist())
