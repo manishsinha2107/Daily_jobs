@@ -220,22 +220,24 @@ async def run_smart_downloader():
                                 elif pos_type == "Positional" and ("Exited" in status_text or "Live-Entered" in status_text or "Active" in status_text):
                                     should_download = True
                                     
+                                # [MODULE/CLASS SSOT ROLE]: DOM Interaction Layer
+                                # [FUNCTION CONTRACT & MATH]: Injects raw JavaScript to bypass rendering layer issues.
                                 if should_download:
                                     log(f"🎯 Match found & condition met for {pos_type}. Downloading...")
-                                    # [TECHNICAL]: Inject force=True to bypass Playwright's strict physical layer actionability checks.
-                                    # [TRADING DOMAIN]: Ensures the scraper clicks the 'More' dropdown even if the WhatsApp Terms modal unexpectedly covers the screen during the loop iteration.
-                                    await container.locator('button[id*="More"]').click(force=True)
+                                    # [TECHNICAL]: Inject JavaScript natively to bypass Playwright's physical bounding box checks entirely.
+                                    # [BUSINESS / DOMAIN LOGIC]: Eliminates "Element is not visible" crashes caused by overlapping modals, CSS rendering delays, or 0x0 display states.
+                                    await container.locator('button[id*="More"]').evaluate("node => node.click()")
                                     
                                     # [TECHNICAL]: Manual event-loop yield for 1500ms.
-                                    # [TRADING DOMAIN]: Gives the Bootstrap UI dropdown menu sufficient time to physically render and mount the "Download Data" link before clicking it into the void.
+                                    # [BUSINESS / DOMAIN LOGIC]: Gives the Bootstrap UI dropdown menu sufficient time to attach the "Download Data" DOM node.
                                     await asyncio.sleep(1.5)
                                     
                                     # [TECHNICAL]: Extended timeout to 60000ms.
                                     # [BUSINESS / DOMAIN LOGIC]: Gives Tradetron's backend 60 seconds to generate the CSV before aborting.
                                     async with page.expect_download(timeout=60000) as download_info:
-                                        # [TECHNICAL]: Inject force=True to bypass the same modal intercept for the download trigger.
-                                        # [TRADING DOMAIN]: Guarantees the actual CSV is requested and downloaded successfully.
-                                        await container.locator('a:has-text("Download Data")').click(force=True)
+                                        # [TECHNICAL]: Inject JavaScript natively to trigger the download link.
+                                        # [BUSINESS / DOMAIN LOGIC]: Guarantees the actual CSV is requested successfully regardless of visual layout corruption.
+                                        await container.locator('a:has-text("Download Data")').evaluate("node => node.click()")
                                     
                                     download = await download_info.value
                                     temp_path = await download.path()
@@ -257,9 +259,18 @@ async def run_smart_downloader():
                                     log(f"⏭️ {strat_name} found, but status/position_type condition not met.")
                             else:
                                 log(f"❓ ERROR: Strategy '{strat_name}' not found.")
+                        # [MODULE/CLASS SSOT ROLE]: Inner Loop Fault Isolator
+                        # [FUNCTION CONTRACT & MATH]: Manages state recovery post-failure inside the strategy enumeration.
                         except Exception as inner_e:
                             # [TECHNICAL]: Catch-and-release to preserve the account session.
                             log(f"⚠️ Skip/Timeout for {strat_name}: {inner_e}")
+                            # [TECHNICAL]: Hard page reload to cleanse DOM state.
+                            # [BUSINESS / DOMAIN LOGIC]: Guarantees the next strategy iteration starts with a pristine dashboard, overriding any frozen spinners or corrupted overlays.
+                            try:
+                                await page.reload(wait_until="load")
+                                await page.wait_for_selector('#search_input', timeout=60000)
+                            except Exception:
+                                pass
                             continue
                 except Exception as e:
                     log(f"❌ Error for {email}: {e}")
