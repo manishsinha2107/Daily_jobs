@@ -4,12 +4,34 @@ on:
   workflow_dispatch:
     # Allows manual trigger from the GitHub UI
 
+# [MODULE/CLASS SSOT ROLE]: Standalone Downloader Pipeline
+# [FUNCTION CONTRACT & MATH]: Generates dynamic job parallelization based on external config variables.
 jobs:
+  setup-matrix:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.set-matrix.outputs.matrix }}
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+      - name: Generate Matrix Array
+        id: set-matrix
+        # [TECHNICAL]: Evaluates config.py in a transient Python shell to produce a valid JSON array for GitHub's fromJson parser.
+        # [BUSINESS / DOMAIN LOGIC]: Decouples manual triggers from rigid limits, sharing the exact same architecture as the master pipeline.
+        run: |
+          ARRAY=$(python -c "import sys, json; sys.path.append('.'); from scripts import config; print(json.dumps(list(range(getattr(config, 'MATRIX_CHUNKS', 10)))))")
+          echo "matrix=$ARRAY" >> $GITHUB_OUTPUT
+
   download-and-upload:
+    needs: setup-matrix
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        chunk_index: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
+        chunk_index: ${{ fromJson(needs.setup-matrix.outputs.matrix) }}
       fail-fast: false
 
     steps:
