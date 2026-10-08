@@ -19,3 +19,7 @@ else:
 # - To run normally for ALL active users: Leave this list completely empty.
 #   Example: TARGET_EMAILS = []
 TARGET_EMAILS = ["manish.kumar@ensuringsuccess.in","manish.sayy@gmail.com"]
+
+# [TECHNICAL]: Global integer defining maximum parallel runners.
+# [BUSINESS / DOMAIN LOGIC]: Governs both GitHub Action job generation and Python round-robin distribution mathematically.
+MATRIX_CHUNKS = 2
