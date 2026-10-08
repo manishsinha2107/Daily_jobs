@@ -192,61 +192,70 @@ async def run_smart_downloader():
                     await page.wait_for_selector('#search_input', timeout=60000)
 
                     for _, row in group.iterrows():
-                        # UPDATED: Pulling from strategy_full_name instead of strategy_name
-                        strat_name = str(row['strategy_full_name']).strip()
-                        log(f"🔍 Searching Strategy: {strat_name}")
-                        
-                        await page.locator('#search_input').fill("")
-                        await page.locator('#search_input').type(strat_name, delay=50)
-                        await asyncio.sleep(5) 
-
-                        container = page.locator(f"div.strategy__section:has(a:text-is('{strat_name}'))").first
-
-                        if await container.count() > 0:
-                            status_text = await container.inner_text()
-                            pos_type = str(row.get('position_type', '')).strip()
+                        # [MODULE/CLASS SSOT ROLE]: Inner Loop Fault Isolator
+                        # [FUNCTION CONTRACT & MATH]: Wraps the individual strategy to prevent a single timeout from starving the rest of the account.
+                        try:
+                            # UPDATED: Pulling from strategy_full_name instead of strategy_name
+                            strat_name = str(row['strategy_full_name']).strip()
+                            log(f"🔍 Searching Strategy: {strat_name}")
                             
-                            should_download = False
-                            if pos_type == "Intraday" and "Exited" in status_text:
-                                should_download = True
-                            elif pos_type == "Positional" and ("Exited" in status_text or "Live-Entered" in status_text or "Active" in status_text):
-                                should_download = True
+                            await page.locator('#search_input').fill("")
+                            await page.locator('#search_input').type(strat_name, delay=50)
+                            await asyncio.sleep(5) 
+
+                            container = page.locator(f"div.strategy__section:has(a:text-is('{strat_name}'))").first
+
+                            if await container.count() > 0:
+                                status_text = await container.inner_text()
+                                pos_type = str(row.get('position_type', '')).strip()
                                 
-                            if should_download:
-                                log(f"🎯 Match found & condition met for {pos_type}. Downloading...")
-                                # [TECHNICAL]: Inject force=True to bypass Playwright's strict physical layer actionability checks.
-                                # [TRADING DOMAIN]: Ensures the scraper clicks the 'More' dropdown even if the WhatsApp Terms modal unexpectedly covers the screen during the loop iteration.
-                                await container.locator('button[id*="More"]').click(force=True)
-                                
-                                # [TECHNICAL]: Manual event-loop yield for 1500ms.
-                                # [TRADING DOMAIN]: Gives the Bootstrap UI dropdown menu sufficient time to physically render and mount the "Download Data" link before clicking it into the void.
-                                await asyncio.sleep(1.5)
-                                
-                                async with page.expect_download() as download_info:
-                                    # [TECHNICAL]: Inject force=True to bypass the same modal intercept for the download trigger.
-                                    # [TRADING DOMAIN]: Guarantees the actual CSV is requested and downloaded successfully.
-                                    await container.locator('a:has-text("Download Data")').click(force=True)
-                                
-                                download = await download_info.value
-                                temp_path = await download.path()
-                                
-                                # Preserve original file extension from server
-                                file_ext = os.path.splitext(download.suggested_filename)[1]
-                                
-                                # Check if strategy deployment type is strictly 'Live Auto'
-                                if str(row.get('deployment_type')).strip() == "Live Auto":
-                                    strat_id = str(row.get('strategy_id')).strip()
-                                    final_filename = f"{strat_id}_{strat_name}{file_ext}"
-                                    log(f"🏷️ Prefixing Live Auto Strategy: {final_filename}")
-                                else:
-                                    final_filename = f"{strat_name}{file_ext}"
-                                    log(f"🏷️ Using Standard Filename: {final_filename}")
+                                should_download = False
+                                if pos_type == "Intraday" and "Exited" in status_text:
+                                    should_download = True
+                                elif pos_type == "Positional" and ("Exited" in status_text or "Live-Entered" in status_text or "Active" in status_text):
+                                    should_download = True
                                     
-                                upload_to_drive(temp_path, final_filename)
+                                if should_download:
+                                    log(f"🎯 Match found & condition met for {pos_type}. Downloading...")
+                                    # [TECHNICAL]: Inject force=True to bypass Playwright's strict physical layer actionability checks.
+                                    # [TRADING DOMAIN]: Ensures the scraper clicks the 'More' dropdown even if the WhatsApp Terms modal unexpectedly covers the screen during the loop iteration.
+                                    await container.locator('button[id*="More"]').click(force=True)
+                                    
+                                    # [TECHNICAL]: Manual event-loop yield for 1500ms.
+                                    # [TRADING DOMAIN]: Gives the Bootstrap UI dropdown menu sufficient time to physically render and mount the "Download Data" link before clicking it into the void.
+                                    await asyncio.sleep(1.5)
+                                    
+                                    # [TECHNICAL]: Extended timeout to 60000ms.
+                                    # [BUSINESS / DOMAIN LOGIC]: Gives Tradetron's backend 60 seconds to generate the CSV before aborting.
+                                    async with page.expect_download(timeout=60000) as download_info:
+                                        # [TECHNICAL]: Inject force=True to bypass the same modal intercept for the download trigger.
+                                        # [TRADING DOMAIN]: Guarantees the actual CSV is requested and downloaded successfully.
+                                        await container.locator('a:has-text("Download Data")').click(force=True)
+                                    
+                                    download = await download_info.value
+                                    temp_path = await download.path()
+                                    
+                                    # Preserve original file extension from server
+                                    file_ext = os.path.splitext(download.suggested_filename)[1]
+                                    
+                                    # Check if strategy deployment type is strictly 'Live Auto'
+                                    if str(row.get('deployment_type')).strip() == "Live Auto":
+                                        strat_id = str(row.get('strategy_id')).strip()
+                                        final_filename = f"{strat_id}_{strat_name}{file_ext}"
+                                        log(f"🏷️ Prefixing Live Auto Strategy: {final_filename}")
+                                    else:
+                                        final_filename = f"{strat_name}{file_ext}"
+                                        log(f"🏷️ Using Standard Filename: {final_filename}")
+                                        
+                                    upload_to_drive(temp_path, final_filename)
+                                else:
+                                    log(f"⏭️ {strat_name} found, but status/position_type condition not met.")
                             else:
-                                log(f"⏭️ {strat_name} found, but status/position_type condition not met.")
-                        else:
-                            log(f"❓ ERROR: Strategy '{strat_name}' not found.")
+                                log(f"❓ ERROR: Strategy '{strat_name}' not found.")
+                        except Exception as inner_e:
+                            # [TECHNICAL]: Catch-and-release to preserve the account session.
+                            log(f"⚠️ Skip/Timeout for {strat_name}: {inner_e}")
+                            continue
                 except Exception as e:
                     log(f"❌ Error for {email}: {e}")
                 finally:
