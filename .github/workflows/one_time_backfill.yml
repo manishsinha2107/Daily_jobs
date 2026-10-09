@@ -1,0 +1,43 @@
+# --- AFTER (PATCHED CODE | File: .github/workflows/one_time_backfill.yml | Lines 1 to 34) ---
+# [MODULE/CLASS SSOT ROLE]: One-Time Database Retrofitter CI/CD
+# [FUNCTION CONTRACT & MATH]: Executes the standalone python script remotely within the GitHub environment.
+name: 🔑 One-Time Database Backfill
+
+on:
+  workflow_dispatch:
+
+jobs:
+  execute-backfill:
+    runs-on: ubuntu-latest
+    steps:
+      # [TECHNICAL]: Pulls the repository code.
+      # [BUSINESS / DOMAIN LOGIC]: Gives the runner access to scripts/one_time_backfill.py.
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      # [TECHNICAL]: Initializes Python runtime.
+      # [BUSINESS / DOMAIN LOGIC]: Provides the correct ecosystem to run the pandas and API operations.
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+          
+      # [TECHNICAL]: Installs data manipulation and Google API client libraries.
+      # [BUSINESS / DOMAIN LOGIC]: Ensures the script has the exact tools to read from Drive and push to Supabase.
+      - name: Install Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install pandas supabase google-auth google-api-python-client python-dotenv
+          
+      # [TECHNICAL]: Injects repository secrets as environment variables during execution.
+      # [BUSINESS / DOMAIN LOGIC]: Connects the logic securely to your production Supabase database and Google Drive folder.
+      - name: Run Backfill Script
+        env:
+          PYTHONUNBUFFERED: "1"
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+          GDRIVE_SERVICE_ACCOUNT_JSON: ${{ secrets.GDRIVE_SERVICE_ACCOUNT_JSON }}
+          SOURCE_FOLDER: ${{ secrets.SOURCE_FOLDER }}
+        run: |
+          echo "🚀 Starting One-Time Backfill from Google Drive to Supabase..."
+          python scripts/one_time_backfill.py
