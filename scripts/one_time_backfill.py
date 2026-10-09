@@ -1,4 +1,4 @@
-# --- AFTER (PATCHED CODE | File: scripts/one_time_backfill.py | Lines 1 to 24) ---
+# --- AFTER (PATCHED CODE | File: scripts/one_time_backfill.py) ---
 import os
 import io
 import json
@@ -102,22 +102,32 @@ def run_backfill():
         except Exception as e:
             print(f"⚠️ Failed to parse {file_name}: {e}")
     
-
+    # [MODULE/CLASS SSOT ROLE]: One-Time Database Retrofitter Persistence Layer
+    # [FUNCTION CONTRACT & MATH]: Executes targeted in-place column updates against exact row IDs safely, regardless of loop indentation.
+    if updates:
         print(f"📤 Pushing {len(updates)} specific updates to Supabase via targeted updates...")
         success_count = 0
         for item in updates:
-            # [TECHNICAL]: Extract target row ID and isolate only the new Set metadata columns for the update payload.
-            # [BUSINESS / DOMAIN LOGIC]: Bypasses Postgres table INSERT NOT NULL constraints by performing pure UPDATE queries, preventing overwrites of parallel pipeline states.
-            row_id = item.pop("id")
+            # [TECHNICAL]: Extract target row ID non-destructively and isolate the payload via dictionary comprehension.
+            # [BUSINESS / DOMAIN LOGIC]: Bypasses Postgres table INSERT NOT NULL constraints and prevents KeyError crashes if the loop accidentally executes multiple times over the same list.
+            row_id = item["id"]
+            payload = {k: v for k, v in item.items() if k != "id"}
+            
             try:
+                # [TECHNICAL]: Execute the targeted update using the isolated payload.
+                # [BUSINESS / DOMAIN LOGIC]: Safely injects the Set DNA without touching other columns or failing constraints.
                 supabase.table("strategy_trades_verification") \
-                    .update(item) \
+                    .update(payload) \
                     .eq("id", row_id) \
                     .execute()
                 success_count += 1
             except Exception as upd_err:
                 print(f"⚠️ Failed to update row ID {row_id}: {upd_err}")
         print(f"✅ Backfill Complete. Successfully updated {success_count}/{len(updates)} rows.")
+        
+        # [TECHNICAL]: Force-clear the updates array immediately after a successful batch push.
+        # [BUSINESS / DOMAIN LOGIC]: Guarantees that even if this block is accidentally indented inside the file-reading loop, previously pushed rows are deleted from memory and never double-processed.
+        updates.clear()
     else:
         print("⚠️ No matching rows found to backfill.")
 
