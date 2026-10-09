@@ -1,12 +1,16 @@
-# --- AFTER (PATCHED CODE | File: scripts/validate_backfill.py | Lines 1 to 125) ---
 import os
+import io
+import json
 import pandas as pd
 import re
 from dotenv import load_dotenv
 from supabase import create_client
+from google.oauth2 import service_account
+from googleapiclient.discovery import build
+from googleapiclient.http import MediaIoBaseDownload
 
 # [MODULE/CLASS SSOT ROLE]: Database State Mathematical Validator
-# [FUNCTION CONTRACT & MATH]: Executes a read-only cross-reference between raw CSV output and Supabase table states, asserting structural 1:1 parity for Set DNA columns.
+# [FUNCTION CONTRACT & MATH]: Executes a read-only cross-reference between GDrive CSV output and Supabase table states, asserting structural 1:1 parity for Set DNA columns.
 
 load_dotenv()
 supabase = create_client(os.getenv("SUPABASE_URL"), os.getenv("SUPABASE_KEY"))
@@ -14,19 +18,39 @@ supabase = create_client(os.getenv("SUPABASE_URL"), os.getenv("SUPABASE_KEY"))
 def run_validation():
     target_csv = "31300070_Sanvali Nifty Weekly Directional Positional.csv"
     strat_id = "31300070"
-    source_folder = os.getenv("SOURCE_FOLDER", ".")
-    file_path = os.path.join(source_folder, target_csv)
+    
+    # [TECHNICAL]: Authenticate with Google Drive API.
+    # [BUSINESS / DOMAIN LOGIC]: Replaces hardcoded local disk paths with cloud service bindings to operate inside ephemeral GitHub runners.
+    creds_info = json.loads(os.getenv("GDRIVE_SERVICE_ACCOUNT_JSON"))
+    creds = service_account.Credentials.from_service_account_info(creds_info, scopes=['https://www.googleapis.com/auth/drive.readonly'])
+    drive_service = build('drive', 'v3', credentials=creds)
+    
+    source_folder = os.getenv("SOURCE_FOLDER")
+    
+    # [TECHNICAL]: Query Drive specifically for the hardcoded target CSV.
+    results = drive_service.files().list(q=f"'{source_folder}' in parents and name='{target_csv}' and mimeType='text/csv'", fields="files(id, name)").execute()
+    files = results.get('files', [])
 
-    if not os.path.exists(file_path):
-        print(f"❌ CRITICAL ERROR: Could not find {target_csv} in {source_folder}")
+    if not files:
+        print(f"❌ CRITICAL ERROR: Could not find {target_csv} in Google Drive folder {source_folder}")
         return
 
-    print(f"📊 INGESTING TRUTH DATA: {target_csv}")
+    print(f"📊 INGESTING TRUTH DATA: {target_csv} from Google Drive...")
+    
+    # [TECHNICAL]: Download the specific file ID directly into a RAM buffer.
+    file_id = files[0]['id']
+    request = drive_service.files().get_media(fileId=file_id)
+    fh = io.BytesIO()
+    downloader = MediaIoBaseDownload(fh, request)
+    done = False
+    while not done:
+        status, done = downloader.next_chunk()
+    fh.seek(0)
     
     # [TECHNICAL]: Read CSV and extract ground-truth mappings using the absolute composite key.
     # [BUSINESS / DOMAIN LOGIC]: Binds the raw time, quantity, and side to the Tradetron Set identifiers.
     expected_state = {}
-    df = pd.read_csv(file_path)
+    df = pd.read_csv(fh)
     
     for _, row in df.iterrows():
         if pd.isna(row.iloc[4]): continue
