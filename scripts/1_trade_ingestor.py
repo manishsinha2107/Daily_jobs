@@ -161,6 +161,7 @@ def run_ingestion():
                     qty_val = float(re.sub(r'[^\d.-]', '', str(row.iloc[16]))) if not pd.isna(row.iloc[16]) else 0.0
                     px_val = float(re.sub(r'[^\d.-]', '', str(row.iloc[18]))) if not pd.isna(row.iloc[18]) else 0.0
 
+ 
                     payload.append({
                         "strategy_id": int(strategy_id),
                         "strategy_name": os.path.splitext(file_name)[0],
@@ -171,7 +172,11 @@ def run_ingestion():
                         "quantity": qty_val,
                         "price": px_val,
                         "run_counter": int(row.iloc[27]) if not pd.isna(row.iloc[27]) else 0,
-                        "status": "pending_ohlc"
+                        "status": "pending_ohlc",
+                        # [TECHNICAL]: Safely extracts and strips the strings to ensure clean database insertion.
+                        "condition_type": str(row.iloc[12]).strip() if not pd.isna(row.iloc[12]) else None,
+                        "condition_parent_id": str(row.iloc[24]).strip() if not pd.isna(row.iloc[24]) else None,
+                        "condition_id": str(row.iloc[25]).strip() if not pd.isna(row.iloc[25]) else None
                     })
                 except: continue
 

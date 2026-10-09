@@ -108,8 +108,9 @@ def run_live_positional_ledger():
     all_trades = []
     offset, limit = 0, 1000
     while True:
+
         res = supabase.table("strategy_trades_verification") \
-            .select("id, strategy_id, trade_date, broker_symbol, txn_time, txn_type, quantity, price") \
+            .select("id, strategy_id, trade_date, broker_symbol, txn_time, txn_type, quantity, price, condition_type, condition_id, condition_parent_id") \
             .in_("strategy_id", valid_strat_ids) \
             .eq("ohlc_status", "verified_ohlc_present") \
             .eq("ledger_status", "pending") \
@@ -137,18 +138,11 @@ def run_live_positional_ledger():
         
         index_name = strategy_lookup.get(strat_id, 'NIFTY')
         
-        inventory = {}
-        realized_pnl = 0.0
-        
-        cycle_start_time = None
-        buy_fills = 0
-        sell_fills = 0
-        order_count = 0
-        premium_turnover = 0.0
-        base_qtys = []
-        cycle_trade_ids = []
-        
         strat_trades = strat_trades.sort_values(by='txn_time')
+        
+        # [MODULE/CLASS SSOT ROLE]: Parallel Set Tracking Engine
+        # [FUNCTION CONTRACT & MATH]: Spawns an isolated mathematical sandbox for every overlapping Tradetron Set using its static Master ID.
+        active_sets = {}
         
         for _, txn in strat_trades.iterrows():
             sym = txn['broker_symbol']
@@ -157,75 +151,89 @@ def run_live_positional_ledger():
             t_type = txn['txn_type']
             t_time = txn['txn_time']
             
-            if not cycle_start_time:
-                cycle_start_time = t_time
+            c_type = str(txn.get('condition_type', '')).strip()
+            c_id = str(txn.get('condition_id', '')).strip()
+            cp_id = str(txn.get('condition_parent_id', '')).strip()
+            
+            # [TECHNICAL]: Determines the absolute Master Set ID. If it's an Entry, it is its own parent. If it's a repair/exit, it follows the parent's ID.
+            # [BUSINESS / DOMAIN LOGIC]: Binds all asynchronous lifecycle legs of a specific Set together, preventing cross-contamination with other active sets.
+            master_id = cp_id if cp_id and cp_id != '0' and cp_id.lower() != 'nan' else c_id
+            if not master_id or master_id.lower() == 'nan':
+                master_id = 'legacy_unmapped'
                 
-            buy_fills += 1 if t_type == 'B' else 0
-            sell_fills += 1 if t_type == 'S' else 0
-            premium_turnover += (t_price * t_qty)
-            base_qtys.append(t_qty)
-            cycle_trade_ids.append(txn['id'])
+            if master_id not in active_sets:
+                active_sets[master_id] = {
+                    'inventory': {}, 'realized_pnl': 0.0, 'cycle_start_time': None, 
+                    'buy_fills': 0, 'sell_fills': 0, 'order_count': 0, 
+                    'premium_turnover': 0.0, 'base_qtys': [], 'cycle_trade_ids': []
+                }
+                
+            s = active_sets[master_id]
+            
+            if not s['cycle_start_time']:
+                s['cycle_start_time'] = t_time
+                
+            s['buy_fills'] += 1 if t_type == 'B' else 0
+            s['sell_fills'] += 1 if t_type == 'S' else 0
+            s['premium_turnover'] += (t_price * t_qty)
+            s['base_qtys'].append(t_qty)
+            s['cycle_trade_ids'].append(txn['id'])
             
             freeze_limit = get_historical_freeze_limit(freeze_lookup, index_name, t_time)
-            order_count += math.ceil(t_qty / freeze_limit)
+            s['order_count'] += math.ceil(t_qty / freeze_limit)
 
-            if sym not in inventory or inventory[sym]['qty'] == 0:
-                inventory[sym] = {'qty': t_qty, 'avg_price': t_price, 'side': 'LONG' if t_type == 'B' else 'SHORT'}
+            inv = s['inventory']
+            if sym not in inv or inv[sym]['qty'] == 0:
+                inv[sym] = {'qty': t_qty, 'avg_price': t_price, 'side': 'LONG' if t_type == 'B' else 'SHORT'}
             else:
-                inv = inventory[sym]
-                if (inv['side'] == 'LONG' and t_type == 'B') or (inv['side'] == 'SHORT' and t_type == 'S'):
-                    new_total = inv['qty'] + t_qty
-                    inv['avg_price'] = ((inv['avg_price'] * inv['qty']) + (t_price * t_qty)) / new_total
-                    inv['qty'] = new_total
+                curr = inv[sym]
+                if (curr['side'] == 'LONG' and t_type == 'B') or (curr['side'] == 'SHORT' and t_type == 'S'):
+                    new_total = curr['qty'] + t_qty
+                    curr['avg_price'] = ((curr['avg_price'] * curr['qty']) + (t_price * t_qty)) / new_total
+                    curr['qty'] = new_total
                 else:
-                    if t_qty > inv['qty']:
-                        excess_qty = t_qty - inv['qty']
-                        pnl_mult = 1 if inv['side'] == 'LONG' else -1
-                        realized_pnl += (t_price - inv['avg_price']) * inv['qty'] * pnl_mult
+                    if t_qty > curr['qty']:
+                        excess_qty = t_qty - curr['qty']
+                        pnl_mult = 1 if curr['side'] == 'LONG' else -1
+                        s['realized_pnl'] += (t_price - curr['avg_price']) * curr['qty'] * pnl_mult
                         
-                        inv['side'] = 'SHORT' if inv['side'] == 'LONG' else 'LONG'
-                        inv['qty'] = excess_qty
-                        inv['avg_price'] = t_price
+                        curr['side'] = 'SHORT' if curr['side'] == 'LONG' else 'LONG'
+                        curr['qty'] = excess_qty
+                        curr['avg_price'] = t_price
                     else:
-                        pnl_mult = 1 if inv['side'] == 'LONG' else -1
-                        realized_pnl += (t_price - inv['avg_price']) * t_qty * pnl_mult
-                        inv['qty'] -= t_qty
+                        pnl_mult = 1 if curr['side'] == 'LONG' else -1
+                        s['realized_pnl'] += (t_price - curr['avg_price']) * t_qty * pnl_mult
+                        curr['qty'] -= t_qty
 
-            if all(v['qty'] == 0 for k, v in inventory.items()):
+            # [TECHNICAL]: Cycle check is now evaluated purely within the bounds of the specific Master ID's sandbox.
+            if all(v['qty'] == 0 for k, v in inv.items()):
                 exit_time = t_time
-                duration = (exit_time.date() - cycle_start_time.date()).days
+                duration = (exit_time.date() - s['cycle_start_time'].date()).days
                 
-                cycle_id = f"CYC-{strat_id}-{cycle_start_time.strftime('%Y%m%d%H%M')}-{exit_time.strftime('%Y%m%d%H%M')}"
+                cycle_id = f"CYC-{strat_id}-{master_id}-{s['cycle_start_time'].strftime('%Y%m%d%H%M')}-{exit_time.strftime('%Y%m%d%H%M')}"
                 
                 cycle_record = {
                     'cycle_id': cycle_id,
                     'strategy_id': strat_id,
-                    'entry_date': str(cycle_start_time.date()),
+                    'entry_date': str(s['cycle_start_time'].date()),
                     'exit_date': str(exit_time.date()),
-                    'entry_time': str(cycle_start_time),
+                    'entry_time': str(s['cycle_start_time']),
                     'exit_time': str(exit_time),
                     'duration_days': duration,
-                    'gross_pnl': round(realized_pnl, 2),
-                    'buy_fills': buy_fills,
-                    'sell_fills': sell_fills,
-                    'order_count': order_count,
-                    'premium_turnover': round(premium_turnover, 2),
-                    'base_qtys': json.dumps(base_qtys),
+                    'gross_pnl': round(s['realized_pnl'], 2),
+                    'buy_fills': s['buy_fills'],
+                    'sell_fills': s['sell_fills'],
+                    'order_count': s['order_count'],
+                    'premium_turnover': round(s['premium_turnover'], 2),
+                    'base_qtys': json.dumps(s['base_qtys']),
                     'has_fallback': False,
                     'updated_at': datetime.now(timezone.utc).isoformat()
                 }
                 all_cycles.append(cycle_record)
-                completed_trade_ids.extend(cycle_trade_ids)
+                completed_trade_ids.extend(s['cycle_trade_ids'])
                 
-                inventory = {}
-                realized_pnl = 0.0
-                cycle_start_time = None
-                buy_fills = 0
-                sell_fills = 0
-                order_count = 0
-                premium_turnover = 0.0
-                base_qtys = []
-                cycle_trade_ids = []
+                # [TECHNICAL]: Purge the completed Set from active memory, leaving any other active Sets safely running.
+                del active_sets[master_id]
 
     if all_cycles:
         print(f"📤 Pushing {len(all_cycles)} completed positional cycles to database...")
