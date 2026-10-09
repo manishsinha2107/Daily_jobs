@@ -42,13 +42,16 @@ def run_backfill():
             all_db_rows.extend(res.data)
             offset += 1000
 
-        # [TECHNICAL]: Creates an ultra-rigid dictionary mapping specifically keyed to the current table's auto-incrementing ID.
-        # [BUSINESS / DOMAIN LOGIC]: Prevents fatal cross-contamination between table schemas.
+        # [MODULE/CLASS SSOT ROLE]: Collision-Proof Key Mapper
+        # [FUNCTION CONTRACT & MATH]: Constructs a FIFO queue of primary keys for identical timestamped trades.
+        
+        # [TECHNICAL]: Replaces 1:1 dictionary mapping with a list-appended dictionary to queue multiple IDs matching the same composite key.
+        # [BUSINESS / DOMAIN LOGIC]: Guarantees that perfectly simultaneous twins (e.g., two 65-qty sells in the exact same second) both get safely mapped instead of overwriting each other in memory.
         db_map = {}
         for r in all_db_rows:
             try:
                 key = (str(r['strategy_id']), str(r['trade_date']), str(r['txn_time']), str(r['txn_type']), float(r['quantity']))
-                db_map[key] = r['id']
+                db_map.setdefault(key, []).append(r['id'])
             except Exception: pass
             
         print(f"🗺️ Mapped {len(db_map)} existing rows in {target_table}.")
@@ -82,12 +85,17 @@ def run_backfill():
                         hour_code = "%#I" if os.name == "nt" else "%-I"
                         formatted_time = raw_dt.strftime(f'%Y-%m-%d {hour_code}:%M:%S %p')
                         
+                        # [MODULE/CLASS SSOT ROLE]: Queue Consumer
+                        # [FUNCTION CONTRACT & MATH]: Safely extracts sequential DB IDs and assigns them 1:1 to CSV rows.
+                        
                         qty_val = float(re.sub(r'[^\d.-]', '', str(row.iloc[16])))
                         txn_type = str(row.iloc[11]).strip()
                         
                         key = (strat_id, iso_date, formatted_time, txn_type, qty_val)
-                        if key in db_map:
-                            db_id = db_map[key]
+                        # [TECHNICAL]: Consume the queue using .pop(0) if the list has available IDs.
+                        # [BUSINESS / DOMAIN LOGIC]: Binds sequential identical broker executions cleanly without stranding twin trades.
+                        if key in db_map and len(db_map[key]) > 0:
+                            db_id = db_map[key].pop(0)
                             
                             updates.append({
                                 "id": db_id,
