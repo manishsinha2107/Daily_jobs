@@ -102,11 +102,22 @@ def run_backfill():
         except Exception as e:
             print(f"⚠️ Failed to parse {file_name}: {e}")
     
-    if updates:
-        print(f"📤 Pushing {len(updates)} specific updates to Supabase...")
-        for i in range(0, len(updates), 500):
-            supabase.table("strategy_trades_verification").upsert(updates[i:i+500]).execute()
-        print("✅ Backfill Complete.")
+
+        print(f"📤 Pushing {len(updates)} specific updates to Supabase via targeted updates...")
+        success_count = 0
+        for item in updates:
+            # [TECHNICAL]: Extract target row ID and isolate only the new Set metadata columns for the update payload.
+            # [BUSINESS / DOMAIN LOGIC]: Bypasses Postgres table INSERT NOT NULL constraints by performing pure UPDATE queries, preventing overwrites of parallel pipeline states.
+            row_id = item.pop("id")
+            try:
+                supabase.table("strategy_trades_verification") \
+                    .update(item) \
+                    .eq("id", row_id) \
+                    .execute()
+                success_count += 1
+            except Exception as upd_err:
+                print(f"⚠️ Failed to update row ID {row_id}: {upd_err}")
+        print(f"✅ Backfill Complete. Successfully updated {success_count}/{len(updates)} rows.")
     else:
         print("⚠️ No matching rows found to backfill.")
 
