@@ -239,7 +239,10 @@ def sync_audit_to_shadow():
             "ohlc_status": status,
             "pnl_status": "pending",
             "pnl_1min_status": "pending",
-            "ledger_status": "pending"
+            "ledger_status": "pending",
+            "condition_type": row.get('condition_type'),
+            "condition_id": row.get('condition_id'),
+            "condition_parent_id": row.get('condition_parent_id')
         }
 
     # Convert back to list for batching  }
