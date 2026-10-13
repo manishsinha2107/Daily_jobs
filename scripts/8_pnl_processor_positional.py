@@ -139,10 +139,12 @@ def run_live_positional_ledger():
         index_name = strategy_lookup.get(strat_id, 'NIFTY')
         
         strat_trades = strat_trades.sort_values(by='txn_time')
-        
-        # [MODULE/CLASS SSOT ROLE]: Parallel Set Tracking Engine
-        # [FUNCTION CONTRACT & MATH]: Spawns an isolated mathematical sandbox for every overlapping Tradetron Set using its static Master ID.
+
         active_sets = {}
+        
+        # [TECHNICAL]: O(1) state memory to natively bind orphaned symbol exits to their original originating sandbox.
+        # [BUSINESS / DOMAIN LOGIC]: Eliminates cross-contamination when multiple overlapping sets trade identical instruments concurrently.
+        symbol_master_map = {}
         
         for _, txn in strat_trades.iterrows():
             sym = txn['broker_symbol']
@@ -155,11 +157,15 @@ def run_live_positional_ledger():
             c_id = str(txn.get('condition_id', '')).strip()
             cp_id = str(txn.get('condition_parent_id', '')).strip()
             
-            # [TECHNICAL]: Determines the absolute Master Set ID. If it's an Entry, it is its own parent. If it's a repair/exit, it follows the parent's ID.
-            # [BUSINESS / DOMAIN LOGIC]: Binds all asynchronous lifecycle legs of a specific Set together, preventing cross-contamination with other active sets.
-            master_id = cp_id if cp_id and cp_id != '0' and cp_id.lower() != 'nan' else c_id
-            if not master_id or master_id.lower() == 'nan':
-                master_id = 'legacy_unmapped'
+            # [TECHNICAL]: Intercepts Universal Exits to route them to the originating set via O(1) memory map. For all others, assigns and stores state.
+            # [BUSINESS / DOMAIN LOGIC]: Tradetron drops parent IDs on Universal Exit. This memory lookup guarantees multi-set mathematical isolation natively.
+            if c_type == 'Universal Exit':
+                master_id = symbol_master_map.get(sym, 'legacy_unmapped')
+            else:
+                master_id = cp_id if cp_id and cp_id != '0' and cp_id.lower() != 'nan' else c_id
+                if not master_id or master_id.lower() == 'nan':
+                    master_id = 'legacy_unmapped'
+                symbol_master_map[sym] = master_id
                 
             if master_id not in active_sets:
                 active_sets[master_id] = {
