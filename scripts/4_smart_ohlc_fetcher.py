@@ -262,25 +262,27 @@ def run_smart_fetcher():
 
         # --- 4. VERIFICATION STATUS ASSIGNMENT ---
         if ids_to_update:
-        # [TECHNICAL]: Checks if the target symbol successfully committed candles during the API fetch cycle (successful_memory_commits).
-        # [TRADING DOMAIN]: Eliminates false-negative 'missing_ohlc_at_vault' flags caused by weekend date boundary queries when fetching positional options.
-        if b_sym in successful_memory_commits:
-            final_ohlc_status = "verified_ohlc_present"
-            final_pnl_status = "pending"
-        else:
-            final_ohlc_status = "missing_ohlc_at_vault"
-            final_pnl_status = "skipped_no_ohlc"
+            # [TECHNICAL]: Checks if the target symbol successfully committed candles during the API fetch cycle (successful_memory_commits).
+            # [BUSINESS / DOMAIN LOGIC]: Eliminates false-negative 'missing_ohlc_at_vault' flags caused by weekend date boundary queries when fetching positional options.
+            if b_sym in successful_memory_commits:
+                final_ohlc_status = "verified_ohlc_present"
+                final_pnl_status = "pending"
+            else:
+                final_ohlc_status = "missing_ohlc_at_vault"
+                final_pnl_status = "skipped_no_ohlc"
 
-        # [TECHNICAL]: Executes a batch update on the verification table for all linked trade IDs using the resolved status.
-        # [TRADING DOMAIN]: Ensures closing and opening trades for active positions are correctly marked as verified so downstream PnL engines process them.
-        supabase.table("strategy_trades_verification").update({
-            "ohlc_status": final_ohlc_status,
-            "pnl_status": final_pnl_status,
-            "pnl_1min_status": final_pnl_status,
-            "token_id": locals().get('valid_token', 0) 
-        }).in_("id", ids_to_update).execute()
+            # [TECHNICAL]: Executes a batch update on the verification table for all linked trade IDs using the resolved status.
+            # [BUSINESS / DOMAIN LOGIC]: Ensures closing and opening trades for active positions are correctly marked as verified so downstream PnL engines process them.
+            supabase.table("strategy_trades_verification").update({
+                "ohlc_status": final_ohlc_status,
+                "pnl_status": final_pnl_status,
+                "pnl_1min_status": final_pnl_status,
+                "token_id": locals().get('valid_token', 0) 
+            }).in_("id", ids_to_update).execute()
 
-        print(f"   📝 [LOG] {len(ids_to_update)} trade(s) updated to '{final_ohlc_status}'.")
+            # [TECHNICAL]: Logs the batch operation outcome to standard output.
+            # [BUSINESS / DOMAIN LOGIC]: Provides real-time workflow transparency for the strategy verification pipeline.
+            print(f"   📝 [LOG] {len(ids_to_update)} trade(s) updated to '{final_ohlc_status}'.")
 
     # --- 5. COMMIT POSITIONAL MEMORY ---
     if successful_memory_commits:
