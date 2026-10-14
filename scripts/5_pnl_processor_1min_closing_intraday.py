@@ -220,7 +220,10 @@ def calculate_intraday_pnl_1min_closing():
 
                 print(f"  📈 {t_date} | Strategy {strat_id} | Calculating...", end=" ", flush=True)
 
-                while current_time <= market_close:
+                # # [TECHNICAL]: Dynamically extend the loop past 15:30 to safely process late exits (e.g., 16:04 PM auto-square-offs or delayed broker hooks).
+                processing_end_time = max(market_close, df_all['dt_obj'].max().replace(second=0, microsecond=0))
+
+                while current_time <= processing_end_time:
                     next_minute = current_time + timedelta(minutes=1)
                     minute_txns = df_all[(df_all['dt_obj'] >= current_time) & (df_all['dt_obj'] < next_minute)]
 
