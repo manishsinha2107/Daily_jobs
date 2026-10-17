@@ -60,40 +60,10 @@ def fetch_ohlc_data_paginated(symbols, t_date):
         offset += limit
     return all_ohlc
 
-def build_lot_size_lookup(lot_data):
-    lookup = {}
-    for row in lot_data:
-        idx = row['instrument']
-        if idx not in lookup: lookup[idx] = []
-        lookup[idx].append(row)
-    for idx in lookup:
-        lookup[idx].sort(key=lambda x: x['effective_date'], reverse=True)
-    return lookup
-
-def get_historical_lot_size(lookup, index_name, target_date_str):
-    if index_name not in lookup or not lookup[index_name]: return 1
-    target_dt = datetime.strptime(str(target_date_str).split(' ')[0], "%Y-%m-%d")
-    first_of_month = target_dt.replace(day=1).strftime("%Y-%m-%d")
-    valid_lots = [lot for lot in lookup[index_name] if lot['effective_date'] <= first_of_month]
-    if not valid_lots: return valid_lots[0]['lot_size'] if valid_lots else 1
-    return valid_lots[0]['lot_size']
-
-def build_tax_lookup(tax_data):
-    lookup = {}
-    for row in tax_data:
-        seg = row['segment']
-        if seg not in lookup: lookup[seg] = []
-        lookup[seg].append(row)
-    for seg in lookup:
-        lookup[seg].sort(key=lambda x: x['effective_date'], reverse=True)
-    return lookup
-
-# commented after
-def get_historical_tax(lookup, segment, target_date_str):
-    target_dt_str = str(target_date_str).split(' ')[0]
-    valid_taxes = [t for t in lookup[segment] if t['effective_date'] <= target_dt_str]
-    if not valid_taxes: return lookup[segment][-1] 
-    return valid_taxes[0]
+from live_capital_manager import (
+    build_lot_size_lookup, get_historical_lot_size,
+    build_tax_lookup, get_historical_tax
+)
 
 def build_deployment_lookup(deploy_data):
     lookup = {}
