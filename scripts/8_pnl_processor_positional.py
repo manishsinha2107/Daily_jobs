@@ -42,42 +42,9 @@ def fetch_all_paginated(table_name, select_query="*"):
 # =====================================================================
 # HELPER: HISTORICAL FREEZE LIMIT LOOKUP
 # =====================================================================
-def build_lot_size_lookup(lot_data):
-    lookup = {}
-    for row in lot_data:
-        idx = row['instrument']
-        if idx not in lookup: lookup[idx] = []
-        lookup[idx].append(row)
-    for idx in lookup:
-        lookup[idx].sort(key=lambda x: x['effective_date'], reverse=True)
-    return lookup
-
-def build_freeze_limit_lookup(freeze_data):
-    lookup = {}
-    for row in freeze_data:
-        idx = row['instrument']
-        if idx not in lookup: lookup[idx] = []
-        lookup[idx].append(row)
-    for idx in lookup:
-        lookup[idx].sort(key=lambda x: x['effective_date'], reverse=True)
-    return lookup
-
-def get_historical_freeze_limit(lookup, index_name, target_date_str):
-    if index_name not in lookup or not lookup[index_name]: 
-        raise ValueError(f"❌ Missing freeze limit data in DB for index {index_name}")
-    
-    target_dt_str = str(target_date_str).split(' ')[0]
-    # Removed `.replace(day=1)` truncation to allow exact mid-month point-in-time matching
-    
-    valid_limits = [limit for limit in lookup[index_name] if limit['effective_date'] <= target_dt_str]
-    if not valid_limits: 
-        raise ValueError(f"❌ No valid historical freeze limit found for {index_name} on or before {target_dt_str}")
-        
-    limit = valid_limits[0].get('freeze_limit')
-    if not limit or int(limit) <= 0:
-        raise ValueError(f"❌ Invalid or missing freeze limit in DB for {index_name} on or before {target_dt_str}")
-        
-    return int(limit)
+from live_capital_manager import (
+    build_freeze_limit_lookup, get_historical_freeze_limit
+)
 
 # =====================================================================
 # LIVE POSITIONAL LEDGER BUILDER
