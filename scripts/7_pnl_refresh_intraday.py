@@ -57,16 +57,6 @@ from live_capital_manager import (
     build_tax_lookup, get_historical_tax
 )
 
-def build_deployment_lookup(deploy_data):
-    lookup = {}
-    for row in deploy_data:
-        try:
-            sid = str(row['strategy_id'])
-            month_str = datetime.strptime(str(row['month']).split('T')[0], "%Y-%m-%d").replace(day=1).strftime("%Y-%m-%d")
-            lookup[f"{sid}_{month_str}"] = int(float(row['multiplier']))
-        except Exception: pass
-    return lookup
-
 
 # --- CORE LOGIC ---
 def run_pnl_refresh():
@@ -180,10 +170,9 @@ def run_pnl_refresh():
 
     # 3. Bulk Memory Load (Lookups)
 
-    print("📦 Fetching lot sizes, taxes, and deployments...")
+    print("📦 Fetching lot sizes and taxes...")
     lot_lookup = build_lot_size_lookup(fetch_all_paginated("lot_sizes"))
     tax_lookup = build_tax_lookup(fetch_all_paginated("market_tax_rates"))
-    deploy_lookup = build_deployment_lookup(fetch_all_paginated("live_deployments"))
     
     unit_cap_map = {}
     today_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
@@ -303,22 +292,17 @@ def run_pnl_refresh():
                 max_loss_obj = min(pnl_json, key=lambda x: float(x['pnl']))
                 
                 t_date_obj = datetime.strptime(t_date_str, "%Y-%m-%d")
-                target_month_iso = t_date_obj.replace(day=1).strftime("%Y-%m-%d")
-                
-                multiplier_key = f"{strat_id_str}_{target_month_iso}"
                 deploy_type = strat_meta.get('deployment_type', '')
                 
-                if multiplier_key in deploy_lookup:
-                    multiplier = deploy_lookup[multiplier_key]
-                elif deploy_type == 'Live Auto':
-                    error_msg = f"❌ FATAL ERROR: Live Auto ID {strat_id_str} ({strat_name}) missing multiplier for {target_month_iso}."
-                    print(error_msg)
-                    report_progress("error", error_msg)
-                    raise KeyError(error_msg) 
-                else:
-                    multiplier = 1
-                
                 hist_lot = get_historical_lot_size(lot_lookup, strat_meta['index_name'], t_date_str)
+                
+                # [TECHNICAL]: Reverse-engineer the physical execution multiplier natively from the base_qtys array.
+                # [TRADING DOMAIN]: Eliminates manual dependency on the live_deployments table and automatically adapts capital mapping to mid-month sizing increases.
+                multiplier = 1
+                if daily_base_qtys:
+                    max_qty = max([abs(int(q)) for q in daily_base_qtys])
+                    multiplier = max(1, round(max_qty / (hist_lot if hist_lot else 1)))
+                
                 eff_cap = unit_cap_map.get(strat_id_str, 0) * hist_lot * multiplier
                 pnl_pct = round((daily_final_pnl / eff_cap * 100), 4) if eff_cap > 0 else 0.0
                 
