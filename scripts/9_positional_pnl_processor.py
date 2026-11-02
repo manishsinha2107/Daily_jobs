@@ -60,41 +60,41 @@ def fetch_ohlc_data_paginated(symbols, t_date):
         offset += limit
     return all_ohlc
 
+# [MODULE/CLASS SSOT ROLE]: Live Positional Curve & Overlap Calibration Imports (Law 1 SSOT).
+# [FUNCTION CONTRACT & MATH]: Imports lot-size, tax, and physical multiplier resolvers from live_capital_manager and normalizes mapped Live Auto cycles to 1-lot baseline keyed by YYYYMMDD_YYYYMMDD.
 from live_capital_manager import (
     build_lot_size_lookup, get_historical_lot_size,
-    build_tax_lookup, get_historical_tax
+    build_tax_lookup, get_historical_tax,
+    resolve_traded_multiplier
 )
 
-def build_deployment_lookup(deploy_data):
-    lookup = {}
-    for row in deploy_data:
-        try:
-            sid = str(row['strategy_id'])
-            month_str = datetime.strptime(str(row['month']).split('T')[0], "%Y-%m-%d").replace(day=1).strftime("%Y-%m-%d")
-            lookup[f"{sid}_{month_str}"] = int(float(row['multiplier']))
-        except Exception: pass
-    return lookup
-
-# [MODULE/CLASS SSOT ROLE]: Live Mapped Positional Data Fetcher
-# [FUNCTION CONTRACT & MATH]: Supabase-only pagination wrapper to fetch overlap cycle_ids.
 def fetch_live_positional_mapping(la_mapping_id):
-    # [TECHNICAL]: Reconstructs the exact EntryDate_ExitDate string from the fetched cycle_id.
-    # [BUSINESS / DOMAIN LOGIC]: Enables Live Offline vs Live Auto calibration math inside the live processor natively.
+    # [TECHNICAL]: Paginate through positional_cycle_summary for la_mapping_id, parsing parts[-2][:8] and parts[-1][:8] and dividing pnl by multiplier.
+    # [BUSINESS / DOMAIN LOGIC]: Matches Live Offline cycles to their exact Live Auto counterparts by (entry_date, exit_date) regardless of whether cycle_id has 4 or 5 parts, normalized to 1-lot so differing multipliers never distort slippage.
     live_map = {}
     offset, limit = 0, 500
     while True:
         res = supabase.table("positional_cycle_summary") \
-            .select("cycle_id, pnl") \
+            .select("cycle_id, pnl, multiplier") \
             .eq("strategy_id", la_mapping_id) \
             .range(offset, offset + limit - 1).execute()
         chunk = res.data
-        if not chunk: break
+        if not chunk:
+            break
         for row in chunk:
-            parts = str(row.get('cycle_id', '')).split('-')
-            if len(parts) >= 4:
-                match_key = f"{parts[2][:8]}_{parts[3][:8]}"
-                live_map[match_key] = float(row['pnl'])
-        if len(chunk) < limit: break
+            parts = str(row.get('cycle_id', '')).strip().split('-')
+            if len(parts) >= 4 and len(parts[-2]) >= 8 and len(parts[-1]) >= 8:
+                entry_part = parts[-2][:8]
+                exit_part = parts[-1][:8]
+                if entry_part.isdigit() and exit_part.isdigit():
+                    match_key = f"{entry_part}_{exit_part}"
+                    row_mult = float(row.get('multiplier') or 1.0)
+                    if row_mult <= 0:
+                        row_mult = 1.0
+                    norm_1x_pnl = float(row['pnl']) / row_mult
+                    live_map[match_key] = live_map.get(match_key, 0.0) + norm_1x_pnl
+        if len(chunk) < limit:
+            break
         offset += limit
     return live_map
 
@@ -278,8 +278,12 @@ def run_live_positional_curve_rebuilder():
     print(f"{'='*60}\n")
     
     # 1. UNIFIED MASTER FETCH & STATE EXTRACTION
+    # [MODULE/CLASS SSOT ROLE]: Master Positional Strategy State & Lookup Loader.
+    # [FUNCTION CONTRACT & MATH]: Queries active Positional strategies (including la_mapping_id) and loads historical lot_sizes and market_tax_rates without querying live_deployments.
+    # [TECHNICAL]: Include la_mapping_id in the strategies select projection.
+    # [BUSINESS / DOMAIN LOGIC]: Ensures Live Offline positional strategies can resolve their paired Live Auto strategy ID for slippage calibration.
     master_res = supabase.table("strategies").select(
-        "strategy_id, strategy_name, strategy_full_name, status, deployment_type, strategy_grouping, trades_type, capital, index_name, user_name"
+        "strategy_id, strategy_name, strategy_full_name, status, deployment_type, strategy_grouping, trades_type, capital, index_name, user_name, la_mapping_id"
     ).in_("deployment_type", config.DEPLOYMENT_TYPES).eq("position_type", "Positional").execute()
     
     if not master_res.data:
@@ -297,7 +301,8 @@ def run_live_positional_curve_rebuilder():
         master_cap = float(s.get('capital') or 0.0)
         master_status = s.get('status')
         
-        # Fetch exactly ONE row (the latest) from daily_strategy_pnl
+        # [TECHNICAL]: Fetch the latest row for this strategy from daily_strategy_pnl to resume cumulative PnL state.
+        # [BUSINESS / DOMAIN LOGIC]: Preserves incremental daily curve continuity while resetting if base capital was modified.
         res = supabase.table("daily_strategy_pnl").select(
             "trade_date, cumulative_pnl, peak_cumulative_pnl, base_capital"
         ).eq("strategy_id", sid).order("trade_date", desc=True).limit(1).execute()
@@ -310,7 +315,6 @@ def run_live_positional_curve_rebuilder():
             row = res.data[0]
             saved_cap = float(row.get('base_capital') or 0.0)
             
-            # Check Capital Mismatch
             if saved_cap != master_cap:
                 if master_status == 'Active':
                     print(f"   ⚠️ CAPITAL MISMATCH for ID {sid} (Saved: {saved_cap} | Master: {master_cap}). Forcing soft recalculation.")
@@ -332,10 +336,11 @@ def run_live_positional_curve_rebuilder():
         print("✅ No active strategies require math calculations today.")
         return
 
-    print("📦 Fetching metadata, lot sizes, taxes, and deployments from Supabase...")
+    # [TECHNICAL]: Load only lot_sizes and market_tax_rates; live_deployments table is no longer queried.
+    # [BUSINESS / DOMAIN LOGIC]: Eliminates manual monthly multiplier maintenance in Supabase by deriving multipliers directly from traded quantities.
+    print("📦 Fetching metadata, lot sizes, and taxes from Supabase...")
     lot_lookup = build_lot_size_lookup(fetch_all_paginated("lot_sizes"))
     tax_lookup = build_tax_lookup(fetch_all_paginated("market_tax_rates"))
-    deploy_lookup = build_deployment_lookup(fetch_all_paginated("live_deployments"))
     today_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
 
     global_min_date = min([state['latest_date'] for state in strategy_states.values()])
@@ -444,20 +449,33 @@ def run_live_positional_curve_rebuilder():
             # --- CALCULATE CYCLE OVERLAP ---
             # [MODULE/CLASS SSOT ROLE]: Overlap Application Logic
             # [FUNCTION CONTRACT & MATH]: Calculates slippage dynamically using the strict `match_key`.
+            # [MODULE/CLASS SSOT ROLE]: Quantity-Derived Cycle Capital, Multiplier & Overlap Slippage Engine.
+            # [FUNCTION CONTRACT & MATH]: Computes cycle_multiplier = resolve_traded_multiplier(cycle_qtys, hist_lot_entry) and eff_cap_cycle = (base_capital / curr_lot) * hist_lot_entry * cycle_multiplier.
+            # [TECHNICAL]: Resolve historical lot size on entry_date_str, current lot size on today_str, and physical traded multiplier from cycle_qtys.
+            # [BUSINESS / DOMAIN LOGIC]: Eliminates dependency on live_deployments table; automatically scales margin and multiplier from actual Tradetron fills.
+            deploy_type = meta.get('deployment_type', 'Live Offline')
+            hist_lot_entry = get_historical_lot_size(lot_lookup, index_name, entry_date_str)
+            curr_lot = get_historical_lot_size(lot_lookup, index_name, today_str)
+            unit_cap = base_capital / curr_lot if curr_lot else 0.0
+            cycle_multiplier = resolve_traded_multiplier(cycle_qtys, hist_lot_entry)
+            eff_cap_cycle = unit_cap * hist_lot_entry * cycle_multiplier
+
+            # [TECHNICAL]: Extract entry/exit date signature from parts[-2][:8] and parts[-1][:8] and scale 1-lot live_cycle_map PnL by cycle_multiplier.
+            # [BUSINESS / DOMAIN LOGIC]: Ensures 5-part cycle_ids (with condition_parent_id) match 1:1 by lifecycle dates and compare at identical lot scale.
             cycle_overlap_live = None
             cycle_overlap_slippage = None
-            
-            # [TECHNICAL]: Splits the cycle_id into exact Entry_Exit components to guarantee 1:1 overlap fidelity.
             cycle_match_key = None
-            parts = str(cycle_id).split('-')
-            if len(parts) >= 4:
-                cycle_match_key = f"{parts[2][:8]}_{parts[3][:8]}"
+            parts = str(cycle_id).strip().split('-')
+            if len(parts) >= 4 and len(parts[-2]) >= 8 and len(parts[-1]) >= 8:
+                if parts[-2][:8].isdigit() and parts[-1][:8].isdigit():
+                    cycle_match_key = f"{parts[-2][:8]}_{parts[-1][:8]}"
             
             if cycle_match_key and cycle_match_key in live_cycle_map:
-                cycle_overlap_live = live_cycle_map[cycle_match_key]
-                cycle_overlap_slippage = cycle_overlap_live - float(cycle['gross_pnl'])
+                cycle_overlap_live = live_cycle_map[cycle_match_key] * cycle_multiplier
+                cycle_overlap_slippage = cycle_overlap_live - gross_pnl
             
-            # Pass correct dates to safely query Supabase
+            # [TECHNICAL]: Compute 1-minute MAE/MFE watermarks and daily MTM snapshots for the cycle.
+            # [BUSINESS / DOMAIN LOGIC]: Tracks intraday equity swings across each holding day of the positional cycle.
             max_profit, mp_time, max_loss, ml_time, daily_snapshots = extract_memory_extremes(
                 strat_id, entry_date_str, exit_date_str, cycle['entry_time'], cycle['exit_time']
             )
@@ -466,7 +484,6 @@ def run_live_positional_curve_rebuilder():
             valid_trading_dates.add(entry_date_str)
             valid_trading_dates.add(exit_date_str)
             
-            # Strip out any weekends from valid_trading_dates fallback
             valid_trading_dates = {d for d in valid_trading_dates if datetime.strptime(d, "%Y-%m-%d").weekday() < 5}
             sorted_dates = sorted(list(valid_trading_dates))
             
@@ -528,26 +545,7 @@ def run_live_positional_curve_rebuilder():
                     daily_qtys = []
 
                 daily_net = daily_gross - daily_cost
-                
-                # Dynamic Daily Multiplier Lookup
-                target_month_iso_daily = datetime.strptime(d_str, "%Y-%m-%d").replace(day=1).strftime("%Y-%m-%d")
-                multiplier_key_daily = f"{strat_id}_{target_month_iso_daily}"
-                deploy_type = meta.get('deployment_type', 'Live Offline')
-                
-                if multiplier_key_daily in deploy_lookup:
-                    daily_multiplier = deploy_lookup[multiplier_key_daily]
-                elif deploy_type == 'Live Auto':
-                    error_msg = f"❌ FATAL ERROR: Live Auto ID {strat_id} ({strat_name}) missing multiplier for {target_month_iso_daily}."
-                    print(error_msg)
-                    raise KeyError(error_msg) 
-                else:
-                    daily_multiplier = 1
-                
-                # Capital calculation anchored to Cycle Entry Date
-                hist_lot_daily = get_historical_lot_size(lot_lookup, index_name, entry_date_str)
-                curr_lot = get_historical_lot_size(lot_lookup, index_name, today_str)
-                unit_cap = base_capital / curr_lot if curr_lot else 0
-                eff_cap_daily = unit_cap * hist_lot_daily * daily_multiplier
+                eff_cap_daily = eff_cap_cycle
                 
                 daily_pnl_pct = round((daily_net / eff_cap_daily * 100), 4) if eff_cap_daily > 0 else 0.0
                 
@@ -559,6 +557,9 @@ def run_live_positional_curve_rebuilder():
                 daily_cum_pnl_pct = round((global_running_cum_pnl / eff_cap_daily * 100), 4) if eff_cap_daily > 0 else 0.0
                 daily_max_dd_pct = round((daily_max_dd_amount / eff_cap_daily * 100), 4) if eff_cap_daily > 0 else 0.0
                 
+                # [TECHNICAL]: Attach cycle_overlap_live and cycle_overlap_slippage on the cycle's exit date row in daily_strategy_pnl.
+                # [BUSINESS / DOMAIN LOGIC]: Allows downstream expectancy scripts reading daily_strategy_pnl to access positional cycle slippage without loss.
+                is_exit_day = (d_str == exit_date_str)
                 final_daily_payload.append({
                     "trade_date": d_str,
                     "month_year": curr_dt.strftime("%b %Y"),
@@ -571,7 +572,7 @@ def run_live_positional_curve_rebuilder():
                     "deployment_type": deploy_type,
                     "pnl": round(daily_gross, 2),
                     "eff_capital": round(eff_cap_daily, 2),
-                    "multiplier": int(daily_multiplier),
+                    "multiplier": int(cycle_multiplier),
                     "is_win": 1 if daily_net > 0 else 0,
                     "pnl_percent": daily_pnl_pct,
                     "cumulative_pnl": round(global_running_cum_pnl, 2),
@@ -596,33 +597,16 @@ def run_live_positional_curve_rebuilder():
                     "estimated_costs": round(daily_cost, 2),
                     "net_pnl": round(daily_net, 2),
                     "base_qtys": json.dumps(daily_qtys),
-                    "overlap_live_pnl": None,
-                    "overlap_slippage_amount": None,
+                    "overlap_live_pnl": round(cycle_overlap_live, 2) if (is_exit_day and cycle_overlap_live is not None) else None,
+                    "overlap_slippage_amount": round(cycle_overlap_slippage, 2) if (is_exit_day and cycle_overlap_slippage is not None) else None,
                     "cycle_id": cycle_id
                 })
                 
                 prev_snap = curr_snap
 
-
-            # Cycle Multiplier based strictly on Entry Date
-            target_month_iso_entry = datetime.strptime(entry_date_str, "%Y-%m-%d").replace(day=1).strftime("%Y-%m-%d")
-            multiplier_key_cycle = f"{strat_id}_{target_month_iso_entry}"
-            deploy_type = meta.get('deployment_type', 'Live Offline')
-            
-            if multiplier_key_cycle in deploy_lookup:
-                cycle_multiplier = deploy_lookup[multiplier_key_cycle]
-            elif deploy_type == 'Live Auto':
-                error_msg = f"❌ FATAL ERROR: Live Auto ID {strat_id} ({strat_name}) missing multiplier for {target_month_iso_entry}."
-                print(error_msg)
-                raise KeyError(error_msg) 
-            else:
-                cycle_multiplier = 1
-
-            # Cycle capital calculation anchored to Cycle Entry Date
-            hist_lot_exit = get_historical_lot_size(lot_lookup, index_name, entry_date_str)
-            curr_lot_exit = get_historical_lot_size(lot_lookup, index_name, today_str)
-            unit_cap_exit = base_capital / curr_lot_exit if curr_lot_exit else 0
-            eff_cap_exit = unit_cap_exit * hist_lot_exit * cycle_multiplier
+            # [TECHNICAL]: Reuse eff_cap_cycle anchored to entry_date_str and cycle_multiplier derived from cycle_qtys.
+            # [BUSINESS / DOMAIN LOGIC]: Guarantees 100% capital and multiplier parity between Daily MTM view and Cycle Summary view.
+            eff_cap_exit = eff_cap_cycle
             
             cycle_pnl_pct = round((net_pnl / eff_cap_exit * 100), 4) if eff_cap_exit > 0 else 0.0
             cycle_cum_pnl_pct = round((global_running_cum_pnl / eff_cap_exit * 100), 4) if eff_cap_exit > 0 else 0.0

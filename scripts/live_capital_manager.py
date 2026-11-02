@@ -15,14 +15,39 @@ def build_lot_size_lookup(lot_data):
         lookup[idx].sort(key=lambda x: x['effective_date'], reverse=True)
     return lookup
 
+# [MODULE/CLASS SSOT ROLE]: Point-in-Time Historical Lot Size & Physical Multiplier Authority (Law 1 SSOT).
+# [FUNCTION CONTRACT & MATH]: Resolves historical lot size strictly on or before target_date_str and derives traded multiplier = max(1, round(max(|q|) / hist_lot)).
 def get_historical_lot_size(lookup, index_name, target_date_str):
-    # [TECHNICAL]: Stripped the flawed `.replace(day=1)` to enforce exact point-in-time date evaluation.
-    # [TRADING DOMAIN]: Instantly resolves mid-month exchange regime hallucinations.
-    if index_name not in lookup or not lookup[index_name]: return 1 
+    # [TECHNICAL]: Fail loudly with ValueError if index_name is absent from lookup instead of returning magic fallback 1.
+    # [BUSINESS / DOMAIN LOGIC]: Prevents silent capital and multiplier corruption if an index is missing from the lot_sizes table.
+    if index_name not in lookup or not lookup[index_name]:
+        raise ValueError(f"❌ Missing lot size data in DB for index {index_name}")
+    # [TECHNICAL]: Strip timestamp suffix and filter sorted effective_date records <= target_dt_str.
+    # [BUSINESS / DOMAIN LOGIC]: Applies the exact SEBI exchange lot size active on the trade date.
     target_dt_str = str(target_date_str).split(' ')[0]
     valid_lots = [lot for lot in lookup[index_name] if lot['effective_date'] <= target_dt_str]
-    if not valid_lots: return lookup[index_name][-1]['lot_size'] 
-    return valid_lots[0]['lot_size']
+    if not valid_lots:
+        raise ValueError(f"❌ No historical lot size found for {index_name} on or before {target_dt_str}")
+    lot_val = int(valid_lots[0]['lot_size'])
+    if lot_val <= 0:
+        raise ValueError(f"❌ Invalid non-positive lot size ({lot_val}) for {index_name} on {target_dt_str}")
+    return lot_val
+
+def resolve_traded_multiplier(base_qtys, hist_lot):
+    # [TECHNICAL]: Parse base_qtys from JSON string or list and divide maximum absolute leg quantity by hist_lot.
+    # [BUSINESS / DOMAIN LOGIC]: Automatically detects the account's live traded multiplier (e.g. 130 qty / 65 lot = 2x) directly from broker fills without needing a manual live_deployments table.
+    if not hist_lot or int(hist_lot) <= 0:
+        raise ValueError(f"❌ Invalid historical lot size ({hist_lot}) passed to resolve_traded_multiplier.")
+    parsed_qtys = base_qtys
+    if isinstance(base_qtys, str):
+        import json
+        parsed_qtys = json.loads(base_qtys) if base_qtys.strip() else []
+    if not isinstance(parsed_qtys, list) or len(parsed_qtys) == 0:
+        return 1
+    max_qty = max(abs(int(float(q))) for q in parsed_qtys)
+    if max_qty <= 0:
+        return 1
+    return max(1, int(round(max_qty / float(hist_lot))))
 
 def build_tax_lookup(tax_data):
     lookup = {}

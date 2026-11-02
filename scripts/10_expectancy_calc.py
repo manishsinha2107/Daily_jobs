@@ -93,10 +93,17 @@ def run_expectancy_calc():
         report_heartbeat("success", msg)
         return
 
+    # [MODULE/CLASS SSOT ROLE]: Daily PnL & Slippage Aggregator (Live Expectancy Engine).
+    # [FUNCTION CONTRACT & MATH]: Aggregates multi-cycle same-day rows while preserving NaN on null overlap_slippage_amount via sum(min_count=1).
     agg_rules = {col: 'last' for col in df_raw.columns}
-    for col in ['pnl', 'net_pnl', 'estimated_costs', 'premium_turnover', 'buy_fills', 'sell_fills', 'order_count', 'overlap_slippage_amount']:
+    # [TECHNICAL]: Sum additive numeric columns; use min_count=1 for nullable overlap columns so all-NaN groups remain NaN instead of coercing to 0.0.
+    # [BUSINESS / DOMAIN LOGIC]: Prevents strategies without overlap rows from generating fake 0.0% slippage calibration profiles across all trading days.
+    for col in ['pnl', 'net_pnl', 'estimated_costs', 'premium_turnover', 'buy_fills', 'sell_fills', 'order_count']:
         if col in df_raw.columns:
             agg_rules[col] = 'sum'
+    for col in ['overlap_live_pnl', 'overlap_slippage_amount']:
+        if col in df_raw.columns:
+            agg_rules[col] = lambda s: s.sum(min_count=1)
             
     if 'cycle_id' in agg_rules:
         del agg_rules['cycle_id']
