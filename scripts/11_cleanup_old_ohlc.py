@@ -38,7 +38,7 @@ def report_progress(status, msg):
 
 def cleanup_old_ohlc():
     # Calculate cutoff dates
-    cutoff_date = (datetime.now(timezone.utc) - timedelta(days=60)).strftime("%Y-%m-%d")
+    cutoff_date = (datetime.now(timezone.utc) - timedelta(days=40)).strftime("%Y-%m-%d")
     today_date = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     
     msg_start = f"🧹 Starting Cleanup: OHLC (< {cutoff_date}), Universe (< {today_date}), Tokens (< {today_date})..."
